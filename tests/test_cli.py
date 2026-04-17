@@ -32,7 +32,8 @@ def _make_project_root(tmp_path: Path) -> Path:
     return project_root
 
 
-def test_settings_default_mode_is_real() -> None:
+def test_settings_default_mode_is_real(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NOTEBOOKLM_MODE", raising=False)
     settings = Settings(_env_file=None)
     assert settings.notebooklm_mode == "real"
 

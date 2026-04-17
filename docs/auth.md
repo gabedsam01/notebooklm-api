@@ -25,6 +25,8 @@ Arquivo padrao:
 Retorna:
 
 - `storage_state_present`: se arquivo existe e nao esta vazio
+- `storage_state_valid`: se o arquivo JSON foi parseado com sucesso
+- `cookie_count`: total de cookies carregados
 - `notebooklm_access_ok`: se o backend NotebookLM validou acesso
 - `detail`: mensagem operacional
 
@@ -33,8 +35,10 @@ Exemplo:
 ```json
 {
   "storage_state_present": true,
-  "notebooklm_access_ok": true,
-  "detail": "Sessao NotebookLM validada."
+  "storage_state_valid": true,
+  "cookie_count": 22,
+  "notebooklm_access_ok": false,
+  "detail": "Storage state salvo (22 cookies), mas acesso real ainda nao validado. Erro original: ..."
 }
 ```
 
@@ -42,7 +46,7 @@ Exemplo:
 
 Salva storage state diretamente.
 
-Payload minimo:
+Payload pode ser o objeto completo (formato Playwright):
 
 ```json
 {
@@ -56,6 +60,19 @@ Payload minimo:
   ],
   "origins": []
 }
+```
+
+Ou simplesmente um array bruto de cookies, que sera convertido automaticamente:
+
+```json
+[
+  {
+    "name": "SID",
+    "value": "...",
+    "domain": ".google.com",
+    "path": "/"
+  }
+]
 ```
 
 Resposta:

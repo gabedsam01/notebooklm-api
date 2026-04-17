@@ -37,15 +37,35 @@ class NotebookLMAuthService:
         if not self._storage_state_service.exists():
             return AuthStatusResponse(
                 storage_state_present=False,
+                storage_state_valid=False,
+                cookie_count=0,
                 notebooklm_access_ok=False,
                 detail="Storage state ausente. Importe cookies em /auth/storage-state.",
             )
 
+        # Validate storage state format and count cookies
+        raw_data = self._storage_state_service.load()
+        storage_state_valid = False
+        cookie_count = 0
+        try:
+            if raw_data:
+                payload = StorageStatePayload.model_validate(raw_data)
+                storage_state_valid = True
+                cookie_count = len(payload.cookies)
+        except Exception:
+            pass
+
         access = await notebook_service.verify_access()
+        detail = access.detail
+        if storage_state_valid and not access.ok and "ausente" not in detail.lower():
+            detail = f"Storage state salvo ({cookie_count} cookies), mas acesso real ainda nao validado. Erro original: {access.detail}"
+
         return AuthStatusResponse(
             storage_state_present=True,
+            storage_state_valid=storage_state_valid,
+            cookie_count=cookie_count,
             notebooklm_access_ok=access.ok,
-            detail=access.detail,
+            detail=detail,
         )
 
     def start_login_flow(self) -> LoginStartResponse:

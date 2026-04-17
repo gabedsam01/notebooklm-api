@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class StorageCookie(BaseModel):
@@ -25,6 +25,13 @@ class StorageStatePayload(BaseModel):
     cookies: list[StorageCookie] = Field(default_factory=list)
     origins: list[dict[str, Any]] = Field(default_factory=list)
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_list_to_dict(cls, data: Any) -> Any:
+        if isinstance(data, list):
+            return {"cookies": data, "origins": []}
+        return data
+
 
 class StorageStateSaveResponse(BaseModel):
     saved: bool
@@ -33,6 +40,8 @@ class StorageStateSaveResponse(BaseModel):
 
 class AuthStatusResponse(BaseModel):
     storage_state_present: bool
+    storage_state_valid: bool = False
+    cookie_count: int = 0
     notebooklm_access_ok: bool
     detail: str
 

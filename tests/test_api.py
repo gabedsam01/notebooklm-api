@@ -106,8 +106,21 @@ def test_auth_storage_state_status_and_assisted_login_flow(tmp_path: Path) -> No
 
     status_after = client.get("/auth/status")
     assert status_after.status_code == 200
-    assert status_after.json()["storage_state_present"] is True
-    assert status_after.json()["notebooklm_access_ok"] is True
+    data = status_after.json()
+    assert data["storage_state_present"] is True
+    assert data["storage_state_valid"] is True
+    assert data["cookie_count"] == 1
+    assert data["notebooklm_access_ok"] is True
+
+    # Test saving raw list of cookies directly via POST
+    raw_list = [{"name": "raw_cookie", "value": "val", "domain": "example.com", "path": "/"}]
+    raw_save_response = client.post("/auth/storage-state", json=raw_list)
+    assert raw_save_response.status_code == 200
+    assert raw_save_response.json()["saved"] is True
+
+    status_raw = client.get("/auth/status")
+    assert status_raw.status_code == 200
+    assert status_raw.json()["cookie_count"] == 1
 
 
 def test_notebooks_are_persisted_in_sqlite_and_listed_by_api(tmp_path: Path) -> None:

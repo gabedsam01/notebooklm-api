@@ -33,15 +33,16 @@ Arquivos principais:
 
 No topo, a UI mostra:
 
-- estado atual (`Conectado` ou `Pendente`)
+- estado atual (`Conectado`, `Configurado` ou `Pendente`)
+- contagem de cookies quando disponivel
 - detalhe retornado por `/auth/status`
 
 ### 2) Importar Storage State
 
-Formulario com JSON bruto de storage state.
+Formulario com JSON de storage state. Pode ser o objeto Playwright completo ou apenas um array JSON bruto de cookies (que sera convertido automaticamente).
 
 - endpoint interno: `POST /web/auth/storage-state`
-- retorno em card de resultado com status/tempo
+- retorno em card de resultado com status/tempo e refresh automatico da pagina para atualizar o status no topo.
 
 ### 3) Criar notebook e sincronizar
 

@@ -10,8 +10,14 @@
     </div>
     <div class="rounded-2xl border border-slate-700 bg-slate-950/80 px-4 py-3 text-sm">
       <p class="text-slate-400">Auth atual</p>
-      <p class="font-medium {% if auth_status.notebooklm_access_ok %}text-emerald-300{% else %}text-amber-300{% endif %}">
-        {% if auth_status.notebooklm_access_ok %}Conectado{% else %}Pendente{% endif %}
+      <p class="font-medium {% if auth_status.notebooklm_access_ok %}text-emerald-300{% elif auth_status.storage_state_valid %}text-sky-300{% else %}text-amber-300{% endif %}">
+        {% if auth_status.notebooklm_access_ok %}
+          Conectado
+        {% elif auth_status.storage_state_valid %}
+          Configurado ({{ auth_status.cookie_count }} cookies)
+        {% else %}
+          Pendente
+        {% endif %}
       </p>
       <p class="mt-1 text-xs text-slate-400">{{ auth_status.detail }}</p>
     </div>

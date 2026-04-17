@@ -48,13 +48,15 @@ async def web_save_storage_state(
         parsed = json.loads(storage_state_json)
         payload = StorageStatePayload.model_validate(parsed)
         result = request.app.state.auth_service.save_storage_state(payload)
-        return _render_result(
+        response = _render_result(
             request,
             variant="success",
             title="Storage state salvo",
             message=result.detail,
             elapsed_ms=_elapsed_ms(started),
         )
+        response.headers["HX-Refresh"] = "true"
+        return response
     except Exception as exc:  # noqa: BLE001
         return _render_result(
             request,

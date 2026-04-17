@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+
+{% block content %}
+<section class="mb-8 rounded-3xl border border-slate-800/90 bg-slate-900/70 p-6 shadow-2xl backdrop-blur md:p-8">
+  <div class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+    <div>
+      <p class="mb-2 inline-block rounded-full border border-cyan-400/40 bg-cyan-500/10 px-3 py-1 text-xs font-medium uppercase tracking-wider text-cyan-300">NotebookLM Programmatic API</p>
+      <h1 class="text-3xl font-semibold tracking-tight text-white md:text-4xl">NotebookLM API Console</h1>
+      <p class="mt-2 max-w-3xl text-sm text-slate-300 md:text-base">API + UI para notebooks persistidos em SQLite, operações síncronas/assíncronas e debug de execução para integração com curl/n8n.</p>
+    </div>
+    <div class="rounded-2xl border border-slate-700 bg-slate-950/80 px-4 py-3 text-sm">
+      <p class="text-slate-400">Auth atual</p>
+      <p class="font-medium {% if auth_status.notebooklm_access_ok %}text-emerald-300{% else %}text-amber-300{% endif %}">
+        {% if auth_status.notebooklm_access_ok %}Conectado{% else %}Pendente{% endif %}
+      </p>
+      <p class="mt-1 text-xs text-slate-400">{{ auth_status.detail }}</p>
+    </div>
+  </div>
+</section>
+
+<section class="grid gap-6 lg:grid-cols-2">
+  <article class="space-y-4 rounded-3xl border border-slate-800 bg-slate-900/70 p-5 md:p-6">
+    <h2 class="text-lg font-semibold">1) Importar Storage State</h2>
+    <form hx-post="/web/auth/storage-state" hx-target="#action-result" hx-swap="innerHTML" class="space-y-3">
+      <textarea name="storage_state_json" rows="7" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 p-3 text-xs text-slate-200" placeholder='{"cookies": [], "origins": []}' required></textarea>
+      <button class="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-cyan-400">Salvar storage state</button>
+    </form>
+  </article>
+
+  <article class="space-y-4 rounded-3xl border border-slate-800 bg-slate-900/70 p-5 md:p-6">
+    <h2 class="text-lg font-semibold">2) Criar notebook e sincronizar</h2>
+    <form hx-post="/web/notebooks/create" hx-target="#action-result" hx-swap="innerHTML" class="space-y-3">
+      <input type="text" name="title" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm" placeholder="Meu notebook de estudo" required />
+      <button class="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-emerald-400">Criar notebook</button>
+    </form>
+    <button
+      hx-post="/web/notebooks/sync"
+      hx-target="#action-result"
+      hx-swap="innerHTML"
+      class="rounded-xl bg-sky-400 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-sky-300"
+    >
+      Sincronizar notebooks da conta
+    </button>
+  </article>
+
+  <article class="space-y-4 rounded-3xl border border-slate-800 bg-slate-900/70 p-5 md:p-6">
+    <h2 class="text-lg font-semibold">3) Adicionar fonte única</h2>
+    <form hx-post="/web/sources/text" hx-target="#action-result" hx-swap="innerHTML" class="space-y-3">
+      <div class="grid grid-cols-2 gap-3">
+        <input type="text" name="notebook_id" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm" placeholder="notebook_id (opcional)" />
+        <input type="number" name="local_id" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm" placeholder="local_id (opcional)" />
+      </div>
+      <input type="text" name="title" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm" placeholder="Título da fonte" required />
+      <textarea name="content" rows="5" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 p-3 text-sm" placeholder="Conteúdo textual" required></textarea>
+      <button class="rounded-xl bg-indigo-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-400">Adicionar fonte</button>
+    </form>
+  </article>
+
+  <article class="space-y-4 rounded-3xl border border-slate-800 bg-slate-900/70 p-5 md:p-6">
+    <h2 class="text-lg font-semibold">4) Adicionar fontes em lote</h2>
+    <form hx-post="/web/sources/batch" hx-target="#action-result" hx-swap="innerHTML" class="space-y-3">
+      <div class="grid grid-cols-2 gap-3">
+        <input type="text" name="notebook_id" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm" placeholder="notebook_id (opcional)" />
+        <input type="number" name="local_id" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm" placeholder="local_id (opcional)" />
+      </div>
+      <textarea name="sources_json" rows="6" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 p-3 text-xs" placeholder='[{"title":"Fonte 1","content":"..."},{"title":"Fonte 2","content":"..."}]' required></textarea>
+      <button class="rounded-xl bg-violet-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-400">Enviar lote</button>
+    </form>
+  </article>
+
+  <article class="space-y-4 rounded-3xl border border-slate-800 bg-slate-900/70 p-5 md:p-6">
+    <h2 class="text-lg font-semibold">5) Job de áudio (assíncrono)</h2>
+    <form hx-post="/web/jobs/audio" hx-target="#action-result" hx-swap="innerHTML" class="space-y-3">
+      <input type="text" name="name" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm" placeholder="Nome opcional do job" />
+      <div class="grid grid-cols-2 gap-3">
+        <input type="text" name="notebook_id" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm" placeholder="notebook_id (opcional)" />
+        <input type="number" name="local_id" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm" placeholder="local_id (opcional)" />
+      </div>
+      <select name="mode" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm">
+        <option value="detailed_analysis">detailed_analysis</option>
+        <option value="summary">summary</option>
+        <option value="critical_review">critical_review</option>
+        <option value="debate" selected>debate</option>
+      </select>
+      <input type="text" name="language" value="pt-BR" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm" />
+      <select name="duration" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm">
+        <option value="short">short</option>
+        <option value="standard" selected>standard</option>
+        <option value="long">long</option>
+      </select>
+      <textarea name="focus_prompt" rows="3" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 p-3 text-sm">Em quais aspectos os apresentadores de IA devem se concentrar nesse episodio?</textarea>
+      <button class="rounded-xl bg-amber-400 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-amber-300">Criar job de áudio</button>
+    </form>
+  </article>
+
+  <article class="space-y-4 rounded-3xl border border-slate-800 bg-slate-900/70 p-5 md:p-6">
+    <h2 class="text-lg font-semibold">6) Job de vídeo (assíncrono)</h2>
+    <form hx-post="/web/jobs/video" hx-target="#action-result" hx-swap="innerHTML" class="space-y-3">
+      <input type="text" name="name" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm" placeholder="Nome opcional do job" />
+      <div class="grid grid-cols-2 gap-3">
+        <input type="text" name="notebook_id" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm" placeholder="notebook_id (opcional)" />
+        <input type="number" name="local_id" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm" placeholder="local_id (opcional)" />
+      </div>
+      <input type="text" name="mode" value="explanatory_video" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm" />
+      <input type="text" name="style" value="summary" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm" />
+      <input type="text" name="language" value="pt-BR" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm" />
+      <input type="text" name="visual_style" value="auto" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm" />
+      <textarea name="focus_prompt" rows="3" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 p-3 text-sm">Em quais aspectos os apresentadores de IA devem se concentrar?</textarea>
+      <button class="rounded-xl bg-pink-400 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-pink-300">Criar job de vídeo</button>
+    </form>
+  </article>
+</section>
+
+<section class="mt-6 grid gap-6 lg:grid-cols-[1fr,2fr]">
+  <article id="action-result" class="rounded-3xl border border-slate-800 bg-slate-900/70 p-5 md:p-6">
+    <h2 class="text-lg font-semibold">Ações</h2>
+    <p class="mt-2 text-sm text-slate-300">Resultados das ações da interface aparecem aqui com status e detalhes de debug.</p>
+  </article>
+
+  <article class="rounded-3xl border border-slate-800 bg-slate-900/70 p-5 md:p-6">
+    <h2 class="mb-3 text-lg font-semibold">Notebooks persistidos (SQLite)</h2>
+    <div
+      id="notebooks-table"
+      hx-get="/web/notebooks/list"
+      hx-trigger="load, every 5s"
+      hx-swap="innerHTML"
+    >
+      {% include "partials/notebooks_table.html" %}
+    </div>
+  </article>
+</section>
+
+<section class="mt-6 rounded-3xl border border-slate-800 bg-slate-900/70 p-5 md:p-6">
+  <div class="mb-4 flex flex-col gap-3 md:flex-row">
+    <input id="filter-job-id" type="text" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm" placeholder="Filtrar por job_id" />
+    <input id="filter-job-name" type="text" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm" placeholder="Filtrar por name" />
+    <button
+      hx-get="/web/jobs/search"
+      hx-vals='js:{job_id: document.getElementById("filter-job-id").value, name: document.getElementById("filter-job-name").value}'
+      hx-target="#jobs-table"
+      hx-swap="innerHTML"
+      class="rounded-xl bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:bg-white"
+    >
+      Buscar
+    </button>
+  </div>
+  <div
+    id="jobs-table"
+    hx-get="/web/jobs/search"
+    hx-trigger="load, every 3s"
+    hx-swap="innerHTML"
+  >
+    {% include "partials/jobs_table.html" %}
+  </div>
+</section>
+{% endblock %}

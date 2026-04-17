@@ -1,0 +1,42 @@
+<div class="overflow-auto rounded-2xl border border-slate-800">
+  <table class="min-w-full divide-y divide-slate-800 text-sm">
+    <thead class="bg-slate-950/70 text-slate-300">
+      <tr>
+        <th class="px-3 py-2 text-left font-medium">Local ID</th>
+        <th class="px-3 py-2 text-left font-medium">Notebook ID</th>
+        <th class="px-3 py-2 text-left font-medium">Titulo</th>
+        <th class="px-3 py-2 text-left font-medium">Sources</th>
+        <th class="px-3 py-2 text-left font-medium">Artifacts</th>
+        <th class="px-3 py-2 text-left font-medium">Origem</th>
+        <th class="px-3 py-2 text-left font-medium">Acoes</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-900 bg-slate-950/50 text-slate-200">
+      {% for notebook in notebooks %}
+      <tr>
+        <td class="px-3 py-2 text-xs">{{ notebook.local_id }}</td>
+        <td class="px-3 py-2 font-mono text-xs">{{ notebook.notebook_id }}</td>
+        <td class="px-3 py-2">{{ notebook.title }}</td>
+        <td class="px-3 py-2 text-xs">{{ notebook.source_count }}</td>
+        <td class="px-3 py-2 text-xs">{{ notebook.artifact_count }}</td>
+        <td class="px-3 py-2 text-xs">{{ notebook.origin }}</td>
+        <td class="px-3 py-2 text-xs">
+          <button
+            hx-delete="/web/notebooks/{{ notebook.notebook_id }}"
+            hx-target="#action-result"
+            hx-swap="innerHTML"
+            hx-confirm="Tem certeza que deseja deletar este notebook?"
+            class="rounded-lg border border-rose-400/50 bg-rose-500/10 px-3 py-1 font-medium text-rose-300 hover:bg-rose-500/20"
+          >
+            Deletar
+          </button>
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="7" class="px-3 py-6 text-center text-sm text-slate-400">Nenhum notebook persistido localmente.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

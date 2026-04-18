@@ -1,277 +1,196 @@
-# API guide
+# Referência Oficial da API REST
 
-## Base URL e transporte
+Este documento detalha todos os endpoints, modelos e comportamentos disponíveis em `app/api/routes`.
 
-- Base local padrao: `http://127.0.0.1:8080`
-- Host/porta default da app: `0.0.0.0:8080`
-- Healthcheck: `GET /health`
-- OpenAPI interativo (FastAPI): `/docs`
+Todas as requisições (exceto para `multipart/form-data`) esperam JSON em codificação padrão UTF-8 e enviam JSON como reposta, a menos que operem no modo `sync=false`, onde retornarão um binário (`audio/wav`, `video/mp4`). 
 
-## Content types
+> **Aviso de Base URL:** Caso suba no default, a base path é `http://127.0.0.1:8080/`.
 
-- Requisicoes JSON: `Content-Type: application/json`
-- Requisicoes de UI web (form): `application/x-www-form-urlencoded` via HTMX
-- Respostas JSON: `application/json`
-- Respostas binarias:
-  - audio: `audio/wav`
-  - video: `video/mp4`
+---
 
-## Padroes de resposta
+## 1. Módulo Health
 
-### Sucesso JSON
+### `GET /health`
+Usado para verificação de liveness e status simples da API.
+**Respostas Esperadas:**
+- `200 OK`: `{"status": "ok", "app": "notebooklm-api", "version": "..."}`
 
-Resposta orientada a modelo Pydantic. Exemplo de job criado (`202`):
+---
 
+## 2. Módulo Autenticação (`/auth`)
+
+O módulo de autenticação salva, lê e verifica os cookies Playwright (`storage_state.json`) necessários para se disfarçar e operar requisições HTTP internas no NotebookLM do Google.
+
+### `GET /auth/status`
+Verifica se existe um estado de autenticação guardado no disco.
+**Respostas Esperadas:**
+- `200 OK`: 
 ```json
 {
-  "id": "d112a0f30a734d7a9f63d0d2d9f7f0c0",
-  "name": "generate_audio_summary-d112a0f3",
-  "type": "generate_audio_summary",
-  "status": "queued",
-  "input": {
-    "type": "generate_audio_summary",
-    "notebook_id": "nb_123",
-    "local_id": 12,
-    "mode": "debate",
-    "language": "pt-BR",
-    "duration": "standard",
-    "focus_prompt": "..."
-  },
-  "result": null,
-  "error": null,
-  "created_at": "2026-04-17T11:15:41.123456+00:00",
-  "updated_at": "2026-04-17T11:15:41.123456+00:00",
-  "logs": [
+  "storage_state_present": true,
+  "notebooklm_access_ok": true,
+  "detail": null
+}
+```
+
+### `POST /auth/storage-state`
+Escreve o Cookie de forma limpa convertendo a lista para o formato em disco do arquivo de state.
+**Payload:**
+```json
+{
+  "cookies": [
     {
-      "at": "2026-04-17T11:15:41.123456+00:00",
-      "stage": "queued",
-      "message": "job enfileirado"
+      "name": "SID",
+      "value": "...",
+      "domain": ".google.com",
+      "path": "/",
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
     }
-  ]
+  ],
+  "origins": []
 }
 ```
 
-### Erro JSON
+### `POST /auth/login/start`
+Inicia um fluxo assistido de login Playwright interativo, onde um usuário pode escanear o QR/inserir Senha. Isso emite um evento.
 
-Padrao FastAPI/HTTPException:
+### `POST /auth/login/complete`
+Finaliza o fluxo assistido caso bem sucedido e escreve o `storage_state.json`.
 
+---
+
+## 3. Módulo Notebooks (`/notebooks`)
+
+Lida com os Notebooks e com o catálogo local em banco de dados SQLite. Notebooks podem ser chamados tanto via ID próprio do Google (`notebook_id`) como por atalho de chave primária relacional (`local_id`).
+
+### `GET /notebooks`
+Lista os notebooks salvos no Catálogo SQLite (`data/notebooks.db`).
+
+### `POST /notebooks`
+Cria de forma assíncrona o Notebook remoto e salva localmente.
+**Payload:**
 ```json
 {
-  "detail": "mensagem de erro"
+  "title": "Novo Caderno de Física"
 }
 ```
 
-### Binario
+### `POST /notebooks/sync`
+Bate na API Oficial do Google e faz a importação (`upsert`) dos notebooks da conta para a base SQLite local, removendo o que for orfão. Retorna `imported` e `deleted` count. Ele invoca internamente o `JobService.sync_notebook_artifacts()` para que artefatos anteriores já gerados no passado e perdidos se transformem em `JobRecords` completos.
 
-Para operacoes sincronas (`async=false`) a API retorna `FileResponse` diretamente.
+### `GET /notebooks/{notebook_id}`
+Atualiza o Notebook específico pegando os dados atuais e reescrevendo `source_count`.
 
-- audio: payload JSON -> bytes WAV
-- video: payload JSON -> bytes MP4
+### `DELETE /notebooks/{notebook_id}`
+### `DELETE /notebooks/local/{local_id}`
+Remove o Notebook remoto da conta e posteriormente limpa localmente da base SQLite caso bem sucedido.
 
-## Status codes mais usados
+---
 
-- `200 OK`: leitura/mutacao concluida
-- `201 Created`: notebook criado por `POST /notebooks`
-- `202 Accepted`: job assinado em fila (`POST /jobs`, `POST /operations/*?async=true`)
-- `400 Bad Request`: payload invalido em fluxos auth/login
-- `404 Not Found`: job/notebook/artefato inexistente
-- `409 Conflict`: acesso NotebookLM indisponivel, artefato ainda nao pronto
-- `422 Unprocessable Entity`: validacao Pydantic falhou
+## 4. Módulo Sources (`/sources`)
 
-## Rotas
+Envio de dados textuais crus para dentro do modelo para embasar o "caderno".
 
-### Health
-
-- `GET /health`
-  - resposta: `{ "status": "ok" }`
-
-### Auth
-
-- `GET /auth/status`
-  - verifica se storage state existe e se acesso NotebookLM esta valido
-- `POST /auth/storage-state`
-  - salva cookies/storage state em arquivo local
-- `POST /auth/login/start`
-  - inicia sessao temporaria de login assistido
-- `POST /auth/login/complete`
-  - conclui login assistido com `session_id` + `storage_state`
-
-### Notebooks
-
-- `POST /notebooks`
-  - cria notebook remoto e persiste no SQLite local
-- `GET /notebooks`
-  - lista notebooks persistidos localmente
-- `POST /notebooks/sync`
-  - sincroniza conta remota com SQLite (importa faltantes, remove orfaos)
-- `GET /notebooks/{notebook_id}`
-  - atualiza a partir do remoto quando possivel e retorna registro
-- `DELETE /notebooks/{notebook_id}`
-  - remove remoto + local (quando existirem)
-- `DELETE /notebooks/local/{local_id}`
-  - resolve `local_id` para `notebook_id` e remove
-
-### Sources
-
-- `POST /sources/text`
-  - adiciona uma fonte textual
-- `POST /sources/batch`
-  - adiciona lote de fontes textuais
-
-Ambos aceitam `notebook_id` ou `local_id` (pelo menos um).
-
-### Jobs
-
-- `POST /jobs`
-  - cria job assincrono genrico (payload discriminado por `type`)
-- `GET /jobs/{job_id}`
-  - consulta estado de um job
-- `GET /jobs?job_id=...&name=...`
-  - lista/filtro de jobs
-
-Tipos de job suportados:
-
-- `create_notebook`
-- `add_source`
-- `add_sources_batch`
-- `generate_audio_summary`
-- `generate_video_summary`
-- `delete_notebook`
-
-### Operations (sync + async)
-
-- `POST /operations/audio-summary?async=true|false`
-- `POST /operations/video-summary?async=true|false`
-
-Comportamento:
-
-- `async=true` (default): retorna JSON do job (`202`)
-- `async=false`: processa no request e retorna binario (`200`)
-
-### Artifacts
-
-- `GET /artifacts/{job_id}`
-  - download do artefato associado ao job completo
-  - retorna `409` se job ainda nao completou com artefato
-
-## JSON vs binario: quando usar cada modo
-
-### Modo assincrono (`async=true`)
-
-Use quando voce precisa:
-
-- fluxo resiliente para automacao
-- polling de status
-- recuperacao posterior de artefato
-- observar logs e duracao no job
-
-Fluxo:
-
-1. `POST /operations/*?async=true`
-2. Recebe `job_id`
-3. Poll em `GET /jobs/{job_id}`
-4. Download final em `GET /artifacts/{job_id}`
-
-### Modo sincrono (`async=false`)
-
-Use quando voce precisa:
-
-- bytes imediatamente no mesmo request
-- fluxo simples sem estado de job exposto
-
-Atencao: **O request pode demorar muitos minutos** (10-30 min em geracao real de audio/video).
-O timeout maximo e configurado por `ARTIFACT_WAIT_TIMEOUT_SECONDS` (default 30 min).
-
-Recomendado usar `async=true` para geracao real de artefatos.
-
-## Exemplos com curl
-
-### 1) Health
-
-```bash
-curl -s http://127.0.0.1:8080/health
+### `POST /sources/text`
+Envia um texto cru em formato síncrono ou assíncrono.
+**Payload:**
+```json
+{
+  "notebook_id": "<id_uuid>",
+  "title": "Resumo Cap 1",
+  "content": "A termodinâmica..."
+}
 ```
 
-### 2) Importar storage state
+### `POST /sources/batch`
+Envia múltiplos textos formatados. Cuidado com o Request Limit nativo do servidor/FastAPI para não gerar `HTTP 413 Payload Too Large`.
 
-```bash
-curl -X POST http://127.0.0.1:8080/auth/storage-state \
-  -H "Content-Type: application/json" \
-  -d '{
-    "cookies": [
-      {
-        "name": "SID",
-        "value": "...",
-        "domain": ".google.com",
-        "path": "/",
-        "httpOnly": true,
-        "secure": true,
-        "sameSite": "Lax"
-      }
-    ],
-    "origins": []
-  }'
+---
+
+## 5. Módulo Operations (`/operations`)
+
+Local principal para gerar Mídias usando a inteligência multimodal do Gemini inserida no NotebookLM.
+Sempre informe `async=true` (Retorna 202 com Job Id) ou `async=false` (Trava requisição até o byte array do vídeo/áudio ser transferido nativamente na resposta HTTP).
+
+### `POST /operations/audio-summary?async=true`
+Pede que o painel multímodo de locutores discuta as fontes enviadas no Notebook.
+**Payload (Modelo `GenerateAudioSummaryJobRequest`):**
+```json
+{
+  "notebook_id": "<id_uuid>",
+  "mode": "debate", 
+  "language": "pt-BR",
+  "duration": "standard", 
+  "focus_prompt": "Fale apenas sobre as equações de maxwell"
+}
+```
+**Campos do Enum:**
+- `mode`: `summary`, `debate`, `detailed_analysis`, `critical_review`
+- `duration`: `short`, `standard` 
+
+### `POST /operations/video-summary?async=true`
+Gerador nativo experimental (se disponível para sua conta Google) para clipes rápidos ou lousas virtuais explicando algo.
+**Payload (Modelo `GenerateVideoSummaryJobRequest`):**
+```json
+{
+  "notebook_id": "<id_uuid>",
+  "mode": "explanatory_video",
+  "style": "summary",
+  "visual_style": "auto",
+  "language": "pt-BR"
+}
 ```
 
-### 3) Criar notebook
+---
 
-```bash
-curl -X POST http://127.0.0.1:8080/notebooks \
-  -H "Content-Type: application/json" \
-  -d '{"title":"Notebook API"}'
+## 6. Módulo Jobs (`/jobs`)
+
+Visualização e observabilidade das instâncias em execução background pelo sistema (criadas via Operations).
+
+### `GET /jobs`
+Lista todos os `JobRecords` contidos na pasta de persistência. Permite query params (ex: `?job_id=xxx&name=xxx`).
+
+### `GET /jobs/{job_id}`
+Mostra o status nativo. 
+**Esquema `JobRecord`:**
+```json
+{
+  "id": "e30e1f7c-7a6c-...",
+  "type": "generate_audio_summary",
+  "status": "completed",
+  "notebook_id": "xxxxx-xxxx-xxxx",
+  "started_at": "2026-04-18T10:00:00Z",
+  "completed_at": "2026-04-18T10:04:12Z",
+  "error": null,
+  "artifact_path": "Meu_Novo_Documento.wav",
+  "artifact_metadata": { "title": "Meu_Novo_Documento" },
+  "logs": [
+    { "at": "2026-04-18T10:00:01Z", "stage": "gerar_audio", "message": "Enviando comando..." },
+    { "at": "2026-04-18T10:00:04Z", "stage": "waiting_remote", "message": "status remoto: RUNNING" }
+  ],
+  "result": { "artifact_reference": "reference_uuid", "media_type": "audio/wav" }
+}
 ```
 
-### 4) Audio async (job)
+### Status do Enum `JobStatus`:
+- `queued`: Não captado na memória da Thread
+- `running`: Request inicial lançado
+- `waiting_remote`: Backend comunicando, esperando artefato chegar 
+- `completed`: Tudo certo
+- `failed`: Exception interna na fila
+- `timed_out`: Não processado por limite de timeout.
 
-```bash
-curl -X POST "http://127.0.0.1:8080/operations/audio-summary?async=true" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "notebook_id": "<id>",
-    "mode": "debate",
-    "language": "pt-BR",
-    "duration": "standard",
-    "focus_prompt": "Pontos principais do episodio"
-  }'
-```
+---
 
-### 5) Poll job
+## 7. Módulo Artifacts (`/artifacts`)
 
-```bash
-curl -s http://127.0.0.1:8080/jobs/<job_id>
-```
+Entrega de arquivos finalizados pelo Worker de Jobs.
 
-### 6) Download artefato do job
+### `GET /artifacts/{job_id}`
+Realiza o fetch do arquivo estático nativo convertido. Baseado nos metadados salvos pelo job concluído.
 
-```bash
-curl -L "http://127.0.0.1:8080/artifacts/<job_id>" --output audio.wav
-```
-
-### 7) Audio sync (binario)
-
-```bash
-curl -X POST "http://127.0.0.1:8080/operations/audio-summary?async=false" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "notebook_id": "<id>",
-    "mode": "summary",
-    "language": "pt-BR",
-    "duration": "standard",
-    "focus_prompt": "Resumo objetivo"
-  }' \
-  --output audio.wav
-```
-
-## Integracao n8n (referencia rapida)
-
-Fluxo recomendado em n8n para geracao assincrona:
-
-1. HTTP Request -> `POST /operations/audio-summary?async=true`
-2. Loop/poll -> HTTP Request `GET /jobs/{job_id}`
-3. IF -> `status == completed`
-4. HTTP Request (download file) -> `GET /artifacts/{job_id}`
-
-Dicas:
-
-- para sync (`async=false`), configure node para tratar resposta como arquivo/binario
-- para async, mantenha timeout baixo no node de criacao e faca polling separado
+**Status de Falha:**
+- `404 Not Found`: Arquivo do Job ID não existe ou Job Request não existe.
+- `409 Conflict`: O Job existe, mas ainda não se encontra em status finalizado para retornar nenhum binário.

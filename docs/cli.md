@@ -1,175 +1,67 @@
-# CLI guide
+# Interface de Linha de Comando (CLI)
 
-## Visao geral
+O `notebooklm-api` expõe seu CLI como `notebooklmapi`.
+Este comando é registrado através da configuração `project.scripts` do `pyproject.toml` (`notebooklmapi = "app.cli:main"`). 
 
-O comando `notebooklmapi` e instalado pelo script entrypoint definido em `pyproject.toml`.
+O CLI funciona majoritariamente de forma agnóstica na raíz do projeto com suporte inteligente de busca de `pyproject.toml` em diretórios pais para localizar a raiz do workspace.
 
-- comando principal: `notebooklmapi`
-- funcao alvo: `app.cli:main`
-- foco: setup rapido, controle de processo e operacoes de catalogo
+---
 
-## Como o comando e resolvido
+## Estrutura Global do CLI
 
-Diferente de `npm -g`, o binario nao vira global automaticamente so por existir no projeto.
-
-Voce pode usar em 3 modos:
-
-1. venv ativado (`source .venv/bin/activate`)
-2. chamar binario direto (`.venv/bin/notebooklmapi ...`)
-3. instalar com `pipx` (global isolado)
-
-## Comandos disponiveis
+A base do módulo reside em `app/cli.py`. O parser lida com os seguintes subcomandos:
 
 ### `notebooklmapi setup`
-
-Prepara ambiente local de forma idempotente:
-
-- cria `.venv` se nao existir
-- instala deps com `pip install -e .[dev]`
-- cria `.env` a partir de `.env.example` se estiver ausente
-- prepara diretorios de dados
-- valida bootstrap da app (`from app.main import app`)
-
-Exemplo:
-
-```bash
-notebooklmapi setup
-```
+**Objetivo**: Validar ou realizar o bootstrap limpo da aplicação local.
+**Fluxo do Código (`run_setup`)**:
+1. Busca ou cria o ambiente virtual isolado Python na raiz (`.venv`).
+2. Verifica binários válidos de Python e PIP.
+3. Faz a instalação de dependências iterativa `pip install -e .[dev]` bloqueando checks remotos longos.
+4. Espelha `.env.example` para `.env` (caso inexistente).
+5. Prepara toda a infra de arquivos da constante de settings (folders `data/`, `data/auth/`, etc).
+6. Valida boot (Importa o `main.py` e valida a propriedade Pydantic `app.title` para garantir sanity-check sem crashs no startup daemonizado).
 
 ### `notebooklmapi start`
-
-Inicia API em background:
-
-- host/porta efetivos: `0.0.0.0:8080`
-- modo padrao: `NOTEBOOKLM_MODE=real`
-- grava PID em `data/run/notebooklmapi.pid`
-- grava log em `data/run/notebooklmapi.log`
-- evita multiplas instancias quando PID ativo existe
-
-Exemplo:
-
-```bash
-notebooklmapi start
-```
-
-### `notebooklmapi start --dev`
-
-Mesmo fluxo de start, forcando backend mock:
-
-- injeta `NOTEBOOKLM_MODE=mock` no processo filho
-- ideal para desenvolvimento local sem sessao real
-
-```bash
-notebooklmapi start --dev
-```
-
-### `notebooklmapi off`
-
-Desliga processo em background:
-
-- le PID file
-- envia `SIGTERM`
-- fallback `SIGKILL` se necessario
-- limpa PID file ao final
-
-```bash
-notebooklmapi off
-```
+**Objetivo**: Inicializar o daemon FastAPI HTTP Uvicorn desatrelado do shell.
+**Argumentos**:
+- `--dev`: Se anexado, força a variável `NOTEBOOKLM_MODE=mock`.
+**Fluxo do Código (`run_start`)**:
+1. Confere no disco se existe um Tracking PID vivo. (`data/run/notebooklmapi.pid`). 
+2. Se houver e pertencer à API ativa, bloqueia a execução relatando *"aplicação já em execução"*.
+3. Cria processo desatrelado utilizando Python `subprocess.Popen` atrelando o terminal ao logger file cego em `data/run/notebooklmapi.log`.
+4. Inicia *Ping Backoff* na porta atrelada checando em `http://127.0.0.1:8080/health`. Se timeout for extrapolado (> 12 segs), encerra o processo abortado e limpa cache. Se OK, escreve PID File e avisa o sucesso do `start`.
 
 ### `notebooklmapi status`
+**Objetivo**: Checar integridade sem travar o process pipeline.
+**Fluxo do Código (`run_status`)**:
+- Verifica `pid_file`. Executa instrução `os.kill(pid, 0)` do OS para garantir a persistência. Retorna os dados do Log em disco e do URI Web caso "Online".
 
-Mostra estado atual:
-
-- online/offline
-- PID atual (quando online)
-- endpoint esperado
-- caminho do log
-
-```bash
-notebooklmapi status
-```
+### `notebooklmapi off`
+**Objetivo**: O encerramento cirúrgico (Graceful Shutdown) da camada Uvicorn.
+**Fluxo do Código (`run_off`)**:
+- Se processo estiver listado em `notebooklmapi.pid`: envia um sinal limpo via `os.kill(pid, signal.SIGTERM)`. 
+- Executa loop aguardando por 8.0 segundos.
+- Caso o processo ainda esteja segurando portas nativas TCP: invoca `signal.SIGKILL` limpando de maneira forçada o lock, exclui o pidfile e limpa cache.
 
 ### `notebooklmapi list`
-
-Sincroniza e lista notebooks:
-
-- consulta notebooks da conta NotebookLM
-- compara com SQLite local
-- importa notebooks faltantes no banco
-- remove registros locais que sumiram da conta
-- imprime resumo de sync e lista final
-
-```bash
-notebooklmapi list
-```
-
-Saida esperada (exemplo):
-
-```text
-[list] encontrados no Google: 3
-[list] encontrados no banco: 2
-[list] adicionados ao banco: 1
-[list] removidos do banco: 0
-[list] lista final:
-  - local_id=1 notebook_id=nb-1 title=Notebook 1
-```
-
-Se o acesso remoto estiver indisponivel, o comando:
-
-- retorna codigo de saida `1`
-- informa indisponibilidade remota
-- ainda imprime o estado local do SQLite
-
-### `notebooklmapi list --dev`
-
-Executa list/sync usando backend mock.
-
-```bash
-notebooklmapi list --dev
-```
+**Objetivo**: Sincronizar catálogo da nuvem Google diretamente pelo terminal.
+**Argumentos**:
+- `--dev`: Opera a listagem ignorando HTTP reais.
+**Fluxo do Código (`run_list`)**:
+- Instancia e chama o `NotebookCatalogService`.
+- Sincroniza estado de autorização atual (se o storage state é inválido, recusa e lista apenas itens que já estiverem salvos no Banco SQLite).
+- Varre o UUIDs do cloud vs local. Adiciona faltantes na SQLite.
+- Poda (Pruning): Remove dados locais onde `notebook_id` deixou de existir.
+- Imprime contadores finais (Encontrados no Google, No Banco, Adicionados e Removidos).
 
 ### `notebooklmapi delete <notebook_id>`
+**Objetivo**: Deleção unificada nativa.
+**Fluxo do Código (`run_delete`)**:
+1. Exclui a entidade remota (caso logado).
+2. Se bem-sucedido ou falho no remoto, avança para tentar limpar o respectivo `notebook_id` de dentro do Storage SQLite local.
+3. Mostra output formatado com `deleted_remote` booleano e explicações por detalhe de log na tela.
 
-Remove notebook remoto/local em fluxo tolerante a falhas:
+---
 
-- tenta remover remoto quando existir
-- remove registro local se presente
-- imprime `deleted_remote`, `deleted_local` e detalhe textual
-
-```bash
-notebooklmapi delete <notebook_id>
-```
-
-## Arquivos e diretorios gerados/usados
-
-Durante setup/start, a CLI trabalha com:
-
-- `.venv/`
-- `.env`
-- `data/notebooks.db`
-- `data/jobs/`
-- `data/artifacts/`
-- `data/tmp/`
-- `data/auth/storage_state.json`
-- `data/run/notebooklmapi.pid`
-- `data/run/notebooklmapi.log`
-
-## Codigos de saida (pratica)
-
-- `0`: sucesso operacional
-- `1`: erro de execucao ou indisponibilidade remota em fluxos como `list`
-
-## Fluxo operacional recomendado
-
-1. `notebooklmapi setup`
-2. `notebooklmapi start` (ou `start --dev`)
-3. `notebooklmapi status`
-4. `notebooklmapi list`
-5. usar API/UI conforme necessidade
-6. `notebooklmapi off` ao encerrar
-
-## Dicas de uso avancado
-
-- a CLI resolve `project_root` automaticamente buscando `pyproject.toml` em diretorios pais
-- para scripts CI/CD, prefira binario absoluto (`.venv/bin/notebooklmapi`)
-- em ambiente sem `.venv`, `start` usa o `python` atual como fallback
+## Dependência de Local de Execução
+Em virtude da leitura da flag do `Path`, você não deve isolar o script em `.venv/bin/` sem a referência raiz atrelada, por isso utilizamos as execuções recomendadas no documento principal (`README.md`).

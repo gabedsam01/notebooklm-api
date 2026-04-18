@@ -1,170 +1,61 @@
-# Auth guide
+# Autenticação e Autorização com NotebookLM
 
-## Contexto
+A API usa a biblioteca [`notebooklm-py`](https://github.com/nclv/notebooklm-py) que interage não-oficialmente com as páginas do Google. Por este motivo, não existem "Tokens de API". Todo o funcionamento real baseia-se na emulação de cookies capturados de um navegador através do formato padrão do **Playwright** (`storage_state.json`).
 
-Este projeto nao usa OAuth oficial do Google para NotebookLM.
+---
 
-A autenticacao em modo `real` depende de um arquivo de storage state
-(cookies + origins), normalmente exportado de um browser autenticado.
+## Modos de Operação
 
-Arquivo padrao:
+### Modo `mock`
+No modo Mock (acionado via `.env` `NOTEBOOKLM_MODE=mock` ou CLI com a flag `--dev`), **todas as regras de autenticação são ignoradas**. Operações e deleções não consultam o Google. Útil estritamente para testes de front-end ou design da aplicação que consumirá esta API.
 
-- `data/auth/storage_state.json`
+### Modo `real` (Produção)
+Ativado por padrão. Ele **exige fortemente** a presença de um `storage_state.json` válido para não responder com Erros e Bloqueios.
 
-## Componentes envolvidos
+---
 
-- modelo: `app/models/auth.py`
-- servico de persistencia: `app/services/storage_state_service.py`
-- servico de auth: `app/services/notebooklm_auth_service.py`
-- rotas: `app/api/routes/auth.py`
+## 1. O Arquivo de Sessão (`storage_state.json`)
 
-## Rotas de autenticacao
+O arquivo reside fisicamente em `data/auth/storage_state.json` com permissão de uso restrita (pois garante o controle total da conta do Google atrelada aos cookies).
 
-### `GET /auth/status`
+O NotebookLM exige a injeção dos cookies de autenticação válidos da sua conta, comumente encabeçados pelos cookies obrigatórios:
+- `SID`, `HSID`, `SSID`, `APISID`, `SAPISID`
+- Preferencialmente exportando de um domínio de navegação da `.google.com`.
 
-Retorna:
+### Diferenças da API vs Lib Nativa
+A biblioteca oficial `notebooklm-py` busca o `storage_state.json` lendo da home do usuário linux/mac (`~/.notebooklm/storage_state.json`). **Nós burlamos isso**.
 
-- `storage_state_present`: se arquivo existe e nao esta vazio
-- `storage_state_valid`: se o arquivo JSON foi parseado com sucesso
-- `cookie_count`: total de cookies carregados
-- `notebooklm_access_ok`: se o backend NotebookLM validou acesso
-- `detail`: mensagem operacional
+O `app/main.py` sincroniza e força a variável de ambiente do sistema `$NOTEBOOKLM_HOME` a apontar na inicialização para a pasta `data/auth`. Isso garante que as operações de Downloads da própria biblioteca apontem com precisão para nosso repositório sem falhas silenciosas.
 
-Exemplo:
+---
 
-```json
-{
-  "storage_state_present": true,
-  "storage_state_valid": true,
-  "cookie_count": 22,
-  "notebooklm_access_ok": false,
-  "detail": "Storage state salvo (22 cookies), mas acesso real ainda nao validado. Erro original: ..."
-}
-```
+## 2. Fluxo de Configuração da Autenticação
 
-### `POST /auth/storage-state`
+Em vez de manipular o arquivo json manualmente, recomendamos fortemente o uso da nossa API para configurar e salvar o seu perfil.
 
-Salva storage state diretamente.
+Existem duas abordagens: **Injeção via Estado Bruto (Headless)** ou o **Assistente de Login (Playwright)**.
 
-Payload pode ser o objeto completo (formato Playwright):
+### Abordagem A: Injeção do Estado (`POST /auth/storage-state`)
+Útil caso você possua uma extensão do navegador que exporte a sessão atual inteira para formato JSON.
 
-```json
-{
-  "cookies": [
-    {
-      "name": "SID",
-      "value": "...",
-      "domain": ".google.com",
-      "path": "/"
-    }
-  ],
-  "origins": []
-}
-```
+A nossa API de injeção exposta em `POST /auth/storage-state` entende o formato padrão e **normaliza-o** instantaneamente pro formato exigido pelo Playwright (mesclando domínios, atributos estritos e origins).
 
-Ou simplesmente um array bruto de cookies, que sera convertido automaticamente:
+### Abordagem B: Login Assistido
+Se a injeção não for viável, a aplicação possui o Assistente Interativo.
 
-```json
-[
-  {
-    "name": "SID",
-    "value": "...",
-    "domain": ".google.com",
-    "path": "/"
-  }
-]
-```
+1. Chame **`POST /auth/login/start`**. Isso abrirá de forma escondida uma janela de navegador pela própria API aguardando inserção de credenciais. A resposta do terminal ou UI vai exigir input e interação.
+2. Siga as instruções do Google.
+3. Chame **`POST /auth/login/complete`**. A API confirmará se a sessão logou, exportará o cookie de trás dos panos com segurança e trancará o gerador do arquivo criando o seu `storage_state.json`.
 
-Resposta:
+---
 
-```json
-{
-  "storage_state_present": true,
-  "storage_state_valid": true,
-  "cookie_count_received": 22,
-  "cookie_count_kept": 9,
-  "kept_cookie_names": ["SID", "HSID", "SSID"],
-  "has_minimum_auth_cookies": true,
-  "notebooklm_access_ok": false,
-  "detail": "Storage state filtrado e salvo com 9 cookies relevantes."
-}
-```
+## 3. Checagem de Saúde da Conta (`GET /auth/status`)
 
-### `POST /auth/login/start`
+O endpoint foi idealizado para ser o semáforo verde de integrações da sua empresa.
 
-Inicia um fluxo assistido simples:
+Ele retorna se a persistência visualizou ou não o arquivo de Cookies, mas **mais importante**, testa uma requisição real de ping `verify_access()` à conta para ver se a mesma continua aceitando chamadas. 
+Se os cookies vencerem por decaimento normal do Google, `notebooklm_access_ok` ficará `false` em segundos, barrando imediatamente chamadas de resumos para precaver exceptions inesperadas de timeout de auth.
 
-- gera `session_id`
-- define expiracao (TTL padrao: 20 minutos)
-- guarda sessao apenas em memoria do processo
-
-Resposta:
-
-```json
-{
-  "session_id": "abc123...",
-  "expires_at": "2026-04-17T13:00:00+00:00",
-  "detail": "Fluxo assistido iniciado..."
-}
-```
-
-### `POST /auth/login/complete`
-
-Conclui o fluxo assistido com:
-
-- `session_id`
-- `storage_state`
-
-Se sessao expirou/nao existe, retorna `400` com `detail`.
-
-## Fluxo recomendado (modo real)
-
-1. iniciar API: `notebooklmapi start`
-2. enviar cookies em `POST /auth/storage-state`
-3. validar com `GET /auth/status`
-4. somente depois executar operacoes em `/notebooks`, `/sources`, `/operations`
-
-## Fluxo assistido alternativo
-
-1. `POST /auth/login/start`
-2. autenticar manualmente no browser e capturar storage state
-3. `POST /auth/login/complete` com `session_id` retornado
-4. `GET /auth/status` para confirmar acesso
-
-## Limitacoes reais (importante)
-
-- nao existe API publica oficial do NotebookLM para esse fluxo
-- integracao `real` usa biblioteca nao oficial (`notebooklm-py`)
-- mudancas externas no NotebookLM podem quebrar compatibilidade
-- `session_id` do fluxo assistido e volatil (memoria), reiniciar processo invalida sessoes pendentes
-
-## Seguranca
-
-### Permissoes de arquivo
-
-O `StorageStateService` grava arquivo com permissao `0600`:
-
-- arquivo temporario `.tmp` com `chmod 600`
-- replace atomico para o destino final
-- `chmod 600` novamente no destino
-
-### Boas praticas
-
-- nunca commitar `data/auth/storage_state.json`
-- manter `data/` fora de backups publicos
-- em Docker/VPS, usar volume privado com permissao restrita
-- rotacionar cookies/sessoes em caso de suspeita de vazamento
-
-### Sinais de risco
-
-- `notebooklm_access_ok=false` repetidamente
-- falhas de validacao apos troca de conta/browser
-- arquivo de storage state vazio ou corrompido
-
-## Troubleshooting rapido
-
-- `Storage state ausente`: envie payload novamente em `/auth/storage-state`
-- `Falha ao validar sessao notebooklm-py`: revisar cookies, modo e dependencia real
-- `400` em `/auth/login/complete`: sessao expirada ou `session_id` invalido
-
-Para mais casos, veja `docs/troubleshooting.md`.
+**Ações Sugeridas caso ocorra bloqueio de sessão (`false`)**:
+- Limpar o Storage State antigo (deleção manual de arquivo).
+- Re-injetar novos cookies frescos da sua sessão atual.

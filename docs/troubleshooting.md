@@ -1,202 +1,58 @@
-# Troubleshooting
+# Solução de Problemas (Troubleshooting)
 
-## 1) `notebooklmapi: command not found`
+Este guia concentra os cenários adversos mais recorrentes e como interpretar a observabilidade da API para resgatá-la da paralisação.
 
-### Causa comum
+---
 
-- pacote nao instalado no ambiente atual
-- `.venv` nao ativado
+## 1. Auth & Cookies (`401 Unauthorized` / Falha Seca)
 
-### Como resolver
+**Sintoma:** O endpoint `GET /auth/status` subitamente retorna `"notebooklm_access_ok": false` ou você recebe Exceptions gigantes no Python de Playwright informando que o seletor `document.body` não existe na página do Google.
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .[dev]
-notebooklmapi --help
-```
+**A Causa:** O Google expira sessões. Trocas de Wi-Fi corporativas, IP ou tempo puro invalidam os cookies cruciais (SID, HSID, SSID).
+**A Solução:**
+1. Execute o comando `notebooklmapi delete-auth` (se criado) ou remova fisicamente o arquivo `data/auth/storage_state.json`.
+2. Em um navegador com aba anônima da sua máquina pessoal, faça login no Google.
+3. Use uma extensão como *EditThisCookie* ou *Cookie-Editor* para exportar os cookies em formato JSON.
+4. Jogue o array na rota `POST /auth/storage-state`. O serviço normalizará e salvará limpo de volta no local.
 
-Sem ativar venv:
+---
 
-```bash
-.venv/bin/notebooklmapi --help
-```
+## 2. Falhas no Job: Limite de Tempo Estourou (`timed_out`)
 
-## 2) Virtualenv inconsistente
+**Sintoma:** Um Request em `/operations` ficou em `waiting_remote` por horas e logo virou `timed_out`. O arquivo não apareceu.
+**A Causa:** As APIs de Front-end do NotebookLM sofrem desconexões silenciosas com web sockets. A geração concluiu lá no servidor nativo, mas a API não percebeu.
+**A Solução Automática (Já implementada):**
+A API conta com um Fallback. Ao explodir o timeout (padrão em `.env` -> `ARTIFACT_WAIT_TIMEOUT_SECONDS=1800`), ela consulta por fora a raiz do Notebook. Se o arquivo estiver lá, ela sequestra ele.
 
-### Sintoma
+**Se mesmo o Fallback falhar:**
+Isso indica que o Google falhou ao gerar o vídeo ou áudio do lado dele, muitas vezes por conta das fontes que você injetou. O Job local morre em segurança e você precisará lançar outro.
 
-- `setup` reclama de python/pip ausentes na `.venv`
+---
 
-### Como resolver
+## 3. O Famoso `HTTP 409 Conflict` (Artefato Pendente)
 
-Recriar ambiente:
+**Sintoma:** A requisição em `/artifacts/{job_id}` retorna Status Code 409 ao invés de devolver o MP4/WAV.
+**A Causa:** Você tentou efetuar o Download físico de uma requisição que foi aprovada e criada (portanto, não é `404 Not Found`), mas o estado dela contido em disco ainda é `queued`, `running` ou `waiting_remote`.
+**A Solução:** O design da nossa API não permite travar o binário para não bloquear conexões TCP da sua interface. Respeite o `HTTP 409`, adicione um `sleep(5)` no seu Worker e tente realizar a rota de novo até retornar `200`.
 
-```bash
-rm -rf .venv
-python3 -m venv .venv
-.venv/bin/pip install -e .[dev]
-```
+---
 
-## 3) API nao sobe na porta 8080
+## 4. O Catálogo Local Descolou do Real (Notebooks sumindo)
 
-### Sintoma
+**Sintoma:** O `GET /notebooks` local retorna 5 arquivos. Você loga no browser do Google, existem 15 notebooks lá. Alguns da API dão erro ao serem manipulados.
+**A Causa:** Você operou cadernos manualmente no browser alterando a realidade em que o banco SQLite (`data/notebooks.db`) acreditava estar.
+**A Solução:**
+- Via API: Envie um payload limpo (sem corpo) para `POST /notebooks/sync`.
+- Via Terminal: Rode `notebooklmapi list`.
+Ambas as instruções dizem pro `NotebookCatalogService` puxar todos UUIDs reais, criar os novos localmente e destruir os locais que não existem mais lá no servidor, limpando órfãos.
 
-- `notebooklmapi start` falha no health check
-- `address already in use`
+---
 
-### Como resolver
+## 5. Permissões de Criação de Arquivos em Deploy Linux
 
-1. verificar status:
-
-```bash
-notebooklmapi status
-```
-
-2. desligar instancia registrada:
-
-```bash
-notebooklmapi off
-```
-
-3. identificar processo ocupando 8080 (se necessario):
-
-```bash
-ss -ltnp | grep 8080
-```
-
-## 4) Auth pendente / sem acesso NotebookLM
-
-### Sintoma
-
-- `/auth/status` retorna `storage_state_present=false`
-- ou `notebooklm_access_ok=false`
-
-### Como resolver
-
-1. reenviar storage state valido:
-
-```bash
-curl -X POST http://127.0.0.1:8080/auth/storage-state \
-  -H "Content-Type: application/json" \
-  -d '{"cookies":[{"name":"SID","value":"...","domain":".google.com","path":"/"}],"origins":[]}'
-```
-
-2. validar:
-
-```bash
-curl -s http://127.0.0.1:8080/auth/status
-```
-
-3. conferir se `NOTEBOOKLM_MODE` esta correto para o contexto
-
-## 5) Modo real falha por problema de sessao
-
-### Sintoma
-
-- erro relacionado a sessao NotebookLM expirada
-
-### Como resolver
-
-- reenviar cookies atualizados extraidos do navegador usando o endpoint `/auth/storage-state`
-
-## 6) Operacao async sem artefato ainda disponivel
-
-### Sintoma
-
-- `GET /artifacts/{job_id}` retorna `409`
-
-### Como resolver
-
-- fazer polling em `GET /jobs/{job_id}`
-- aguardar `status=completed`
-- so entao baixar artefato
-
-## 7) SQLite com estado inesperado
-
-### Sintoma
-
-- listagem local divergente da conta
-
-### Como resolver
-
-- rodar sync:
-
-```bash
-curl -X POST http://127.0.0.1:8080/notebooks/sync
-```
-
-ou
-
-```bash
-notebooklmapi list
-```
-
-Se necessario, fazer backup e resetar `data/notebooks.db` com cuidado.
-
-## 8) Jobs falhando sem contexto
-
-### Como diagnosticar
-
-1. consultar job:
-
-```bash
-curl -s http://127.0.0.1:8080/jobs/<job_id>
-```
-
-2. verificar:
-
-- `error`
-- `logs[]` (stages)
-- `input`
-
-3. validar precondicoes:
-
-- auth ok
-- notebook existente
-- notebook com fontes para gerar audio/video
-
-## 9) Docker sem persistencia
-
-### Sintoma
-
-- dados somem ao recriar container
-
-### Como resolver
-
-Sempre montar volume:
-
-```bash
-docker run -d --name notebooklm-api -p 8080:8080 -v "$PWD/data:/app/data" notebooklm-api:latest
-```
-
-## 10) Permissao no volume Docker
-
-### Sintoma
-
-- falha para gravar `data/` (jobs, db, artifacts)
-
-### Como resolver
-
-- ajustar ownership/permissao no host para permitir escrita
-- validar com `docker logs` e inspecionar erros de I/O
-
-## 11) CLI `list` retorna erro mas mostra banco local
-
-### Interpretacao
-
-Comportamento esperado quando acesso remoto esta indisponivel:
-
-- retorno code `1`
-- resumo remoto como indisponivel
-- dump do estado local ainda exibido
-
-Isso permite diagnostico sem perder visibilidade do catalogo local.
-
-## 12) Checklist rapido de recuperacao
-
-1. `notebooklmapi status`
-2. `curl /health`
-3. `curl /auth/status`
-4. `notebooklmapi list` (ou `/notebooks/sync`)
-5. revisar logs de job e logs do processo
+**Sintoma:** Exceções do tipo `PermissionError: [Errno 13] Permission denied: 'data/jobs/xxxx.json'` ao realizar o primeiro envio REST da aplicação num servidor de Nuvem Ubuntu rodando Docker.
+**A Causa:** O usuário contido na Imagem OCI (root ou appuser) difere do usuário que criou o diretório hospedado `data/` via `bind-mount`.
+**A Solução Rápida:**
+Acesse o diretório do root do `docker-compose.yml` e execute:
+`sudo chmod 777 -R ./data`
+**A Solução Profissional:** Descubra o UID do python da imagem e faça `chown` na pasta mapeada.

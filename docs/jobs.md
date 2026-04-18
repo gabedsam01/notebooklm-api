@@ -1,161 +1,69 @@
-# Jobs guide
+# Jobs Assíncronos & Fila de Processamento
 
-## Visao geral
+Dado que a geração de resumos em Inteligência Artificial requer frequentemente de 3 a 10 minutos no serviço do Google, o `notebooklm-api` possui uma camada nativa de gerenciamento de background baseada na classe interna `JobService`.
 
-Jobs sao a base do fluxo assincrono da API.
+Todo o fluxo que passa um `async=true` retornará um Código **HTTP 202** instanciando um Tracking ID persistente (O identificador do Job).
 
-- endpoint principal: `POST /jobs`
-- endpoint de consulta: `GET /jobs/{job_id}`
-- endpoint de listagem/filtro: `GET /jobs?job_id=...&name=...`
-- download final de artefato: `GET /artifacts/{job_id}`
+---
 
-Persistencia local:
+## 1. O Ciclo de Vida do Job (State Machine)
 
-- metadados/jobs: `data/jobs/<job_id>.json`
-- artefatos: `data/artifacts/<job_id>.<ext>`
-- payload temporario de execucao: `data/tmp/<job_id>/input.json` (removido ao final)
+Jobs são representados na memória de disco (`data/jobs/{job_id}.json`) pelo enum `JobStatus`.
 
-## Modelo de job
+1. **`queued`**: A solicitação foi computada e foi listada para ser enviada na próxima Thread da Pool de workers (`ThreadPoolExecutor`).
+2. **`running`**: O Worker engajou no request e está operando comunicação com as funções internas síncronas de Python/Scraping.
+3. **`waiting_remote`**: A ordem de gerar áudio/vídeo já foi entregue ao servidor do Google e a API agora está em *Polling* agressivo na nuvem consultando por atualizações. 
+4. **`completed`**: O arquivo final foi gerado, baixado para a máquina do Gateway (`data/artifacts/`) e o rastreio terminou.
+5. **`failed`**: A API local crachou, o processo sofreu um erro não tratado ou a Thread perdeu integridade. O campo `.error` conterá o trace final da stack.
+6. **`timed_out`**: A contagem final superou a tolerância em segundos estipulada no `.env`. 
 
-Campos principais (`JobRecord`):
+---
 
-- `id`, `name`, `type`, `status`
-- `input`: payload normalizado
-- `result`: saida de negocio (quando concluido)
-- `error`: erro sanitizado (quando falha)
-- `created_at`, `started_at`, `completed_at`, `updated_at`, `duration_ms`
-- `notebook_id`
-- `artifact_path`, `artifact_metadata`
-- `logs`: trilha de etapas (`stage`, `message`, `at`)
+## 2. A Camada de Polling e a Rede de Segurança (Fallback)
 
-## Status de job
+Ao cair em estado `waiting_remote`, o `JobService` passa a perguntar ao servidor do Google a cada `ARTIFACT_POLL_INTERVAL_SECONDS` pelo status. 
 
-- `queued`: enfileirado
-- `running`: em execucao local
-- `waiting_remote`: aguardando processamento remoto no NotebookLM (comum em audio/video)
-- `completed`: concluido com sucesso
-- `failed`: falhou por erro interno ou de rede
-- `timed_out`: excedeu o timeout configurado de espera remota
+### O Problema do Timeout Falso
+Existem casos relatados e observados na API do Google onde a geração chega a 100%, o artefato é liberado na visualização, mas a requisição de polling se perde num limbo, mantendo o processo refém até explodir o `TimeoutError` limitador de segurança configurado (Padrão 30 minutos).
 
-## Tipos de job
+### O Método Fallback
+Esta API está vacinada contra Timeout Falsos. Ao explodir o Timeout na thread de Worker, a aplicação invoca a mecânica de `_find_ready_artifact_fallback`.
+1. A API faz uma listagem forçada não de status, mas do diretório real da sua conta no NotebookLM (`list_artifacts`).
+2. Ela varre buscando por um artefato de formato congruente (Áudio/Vídeo) com estado flag `is_completed=True`.
+3. Se o artefato mais recente de data corresponder a uma geração bem sucedida do backend ignorado, a API sequestra ele pro Job pendente, efetua o download físico e consolida a vitória em estado `completed` forçadamente.
 
-- `create_notebook`
-- `add_source`
-- `add_sources_batch`
-- `generate_audio_summary`
-- `generate_video_summary`
-- `delete_notebook`
+---
 
-## Fluxo assincrono padrao
+## 3. Logs de Tracking Detalhado Interno
 
-1. cliente envia `POST /jobs` (ou `POST /operations/*?async=true`)
-2. API retorna `202` com `job_id`
-3. worker local executa em thread daemon
-4. cliente faz polling em `GET /jobs/{job_id}`
-5. quando `status=completed`, cliente baixa arquivo via `GET /artifacts/{job_id}` (se houver artefato)
+O arquivo não fica vazio durante o processamento. Diferente de sistemas blockbox, há a inclusão estruturada em `job.logs`.
+Considere inspecionar o Job e exibir o campo `logs` nas suas aplicações front-end:
 
-## Exemplo: criar job de audio
-
-```bash
-curl -X POST http://127.0.0.1:8080/jobs \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": "generate_audio_summary",
-    "name": "audio-episodio-42",
-    "notebook_id": "<id>",
-    "mode": "debate",
-    "language": "pt-BR",
-    "duration": "standard",
-    "focus_prompt": "Pontos principais"
-  }'
+```json
+"logs": [
+  { "at": "2026-04-18T10:00:01Z", "stage": "gerar_audio", "message": "Enviando comando..." },
+  { "at": "2026-04-18T10:00:04Z", "stage": "waiting_remote", "message": "status remoto: RUNNING" },
+  { "at": "2026-04-18T10:01:04Z", "stage": "waiting_remote", "message": "status remoto: GENERATING_AUDIO" },
+  { "at": "2026-04-18T10:02:04Z", "stage": "download", "message": "artefato de audio disponivel" }
+]
 ```
+Essas linhas reportam a fase de geração, falhas e polling a cada verificação.
 
-## Polling recomendado
+---
 
-Estrutura simples de polling:
+## 4. O Comportamento de Download Síncrono Tardio
 
-1. aguardar 1-2s entre requests
-2. parar quando `status` for `completed` ou `failed`
-3. em `failed`, registrar `error` + `logs`
-4. em `completed` com `artifact_path`, baixar via `/artifacts/{job_id}`
+Antigamente, se você perdesse o rastreio da API ou abrisse sua conta em um computador físico, os dados e artes geradas sumiriam do radar da API para o resto da vida pois não possuiriam um "Job atrelado".
 
-Exemplo:
+A API dispõe da funcionalidade de **Importação Tardelada de Artefatos**. Ao acionar um evento de sync da conta (`POST /notebooks/sync`), além de varrer notebooks ausentes:
+1. O backend navega iterativamente pelo catálogo nativo do Google lendo todos os Mídia arquivos contidos.
+2. É criado no disco rígido local, `JobRecords` inteiros com a flag `completed` sintetizados, de trás para frente.
+3. Isso habilita o que definimos como **"Baixar remoto"** na UI Web. A integração `trigger_artifact_download` permite iniciar um `asyncio.create_task` solto em background para pegar esse velho ID atrelado sem necessitar de recriar gerações completas.
 
-```bash
-curl -s http://127.0.0.1:8080/jobs/<job_id>
-```
+---
 
-## Logs e debug
+## 5. Extração Honesta de Metadados e Arquivos
 
-Cada job acumula eventos em `logs[]` com estagios como:
+Quando os arquivos são finalizados e guardados em `data/artifacts/`, a API usa a inteligência de recuperação de metadado na origem do pacote HTTP. 
 
-- `queued`
-- `running`
-- `creating_notebook`
-- `adding_source`
-- `adding_sources_batch`
-- `generate_audio`
-- `download_audio`
-- `generate_video`
-- `download_video`
-- `deleting_notebook`
-- `failed`
-- `cleanup`
-
-Esses logs aparecem:
-
-- no JSON do job (`GET /jobs/{job_id}`)
-- na UI web na tabela de jobs (detalhes expansivos)
-
-## Artefatos
-
-Para jobs de audio/video:
-
-- `artifact_path` guarda caminho relativo a `data/` (ex.: `artifacts/<job_id>.wav`)
-- `artifact_metadata` inclui:
-  - `file_name`
-  - `content_type`
-  - `size_bytes`
-  - `sha256`
-
-Download:
-
-```bash
-curl -L http://127.0.0.1:8080/artifacts/<job_id> --output out.bin
-```
-
-Retornos comuns em `/artifacts/{job_id}`:
-
-- `200`: arquivo entregue
-- `404`: job nao encontrado ou arquivo ausente
-- `409`: job ainda nao concluiu com artefato
-
-## Limpeza e ciclo de vida
-
-- durante execucao, o payload de entrada e salvo em `data/tmp/<job_id>/input.json`
-- ao final (sucesso ou falha), a pasta temporaria do job e removida
-- os arquivos de `data/jobs` e `data/artifacts` permanecem para auditoria/debug
-
-## Fluxo sync vs async
-
-Mesmo em operacoes sincronas (`/operations/*?async=false`), o pipeline interno de geracao/download e semelhante,
-mas sem persistir `JobRecord` para o cliente.
-
-Use async quando precisar:
-
-- historico
-- observabilidade
-- retry orchestration
-- integracao com n8n/filas
-
-## Diagnostico rapido
-
-Se um job falhar:
-
-1. leia `error`
-2. inspecione `logs` por estagio
-3. confirme auth (`GET /auth/status`)
-4. valide se notebook tem fontes
-5. confira se `data/artifacts` e gravavel
-
-Mais casos em `docs/troubleshooting.md`.
+Ela ignora preenchimento de Job UUID e, ao invés disso, aplica Sanitização Regex, gravando o Mídia file em HD nativamente com o exato `.title` customizado originado pela AI baseada no resumo, produzindo nomes como: `Resumo_Fisica_Quantica.mp4`.

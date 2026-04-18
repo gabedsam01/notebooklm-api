@@ -1,116 +1,82 @@
-# Docker guide
+# Deploy com Contêineres (Docker)
 
-## Imagem e runtime
+O ecossistema `notebooklm-api` desenha limites rígidos entre "Código Descartável" e "Estado Crítico". Todo o Estado Crítico foi projetado intencionalmente para residir exclusivamente no sub-diretório estrito `/app/data/`.
 
-Arquivo base: `Dockerfile`
+Isso facilita a criação de Imagens OCI efêmeras sem o risco de perda de Jobs e Cookies durante os updates.
 
-- base image: `python:3.12-slim`
-- instala pacote via `pip install .`
-- expoe porta `8080`
-- declara volume persistente em `/app/data`
-- comando padrao:
+---
 
-```bash
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8080
-```
+## Estrutura do Volume Persistente
+A raiz do ambiente possui a pasta `data/`. Se você não a mapear explicitamente em suas configurações de Host Docker, ela ficará alocada na ramificação anonimizada do daemon docker e você perderá a conta ao recriar o contêiner.
 
-## Build
+O mapeamento exato da pasta inclui:
+- `data/auth/` (Seu `storage_state.json`)
+- `data/notebooks.db` (Banco local)
+- `data/jobs/` (Estado atual da Background Task)
+- `data/artifacts/` (Todos os WAV/MP4 gigantescos)
+
+## 1. Usando Docker puro (CLI)
+
+Gere a imagem primária do projeto usando o repositório como raiz.
 
 ```bash
 docker build -t notebooklm-api:latest .
 ```
 
-## Run (padrao)
+Instancie acoplando volumes estritos e expondo a porta `8080` base.
+Utilize a flag `-v` para amarrar o diretório local do servidor.
 
 ```bash
-docker run -d --name notebooklm-api \
+docker run -d \
+  --name nblm-backend \
   -p 8080:8080 \
-  -v "$PWD/data:/app/data" \
+  -v $(pwd)/data:/app/data \
+  -e NOTEBOOKLM_MODE=real \
+  -e APP_HOST=0.0.0.0 \
+  -e APP_PORT=8080 \
   notebooklm-api:latest
 ```
 
-## Run com variaveis de ambiente
+## 2. Orquestração com Docker Compose (Recomendado)
 
-Exemplo em modo mock:
+A abordagem declarativa com o `docker-compose.yml` embutido é mais propícia a manutenções.
 
+Crie no seu host linux/vps um arquivo `docker-compose.yml` isolado:
+```yaml
+version: '3.8'
+
+services:
+  api:
+    image: notebooklm-api:latest
+    build: .
+    container_name: notebooklm-api
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - NOTEBOOKLM_MODE=real
+      - APP_HOST=0.0.0.0
+      - APP_PORT=8080
+      - ARTIFACT_WAIT_TIMEOUT_SECONDS=1800
+      - ARTIFACT_POLL_INTERVAL_SECONDS=15.0
+```
+
+E para iniciar:
 ```bash
-docker run -d --name notebooklm-api \
-  -p 8080:8080 \
-  -v "$PWD/data:/app/data" \
-  -e NOTEBOOKLM_MODE=mock \
-  -e LOG_LEVEL=INFO \
-  notebooklm-api:latest
+# Sobe e constrói em background silenciosamente
+docker-compose up -d --build
+
+# Visualizar o console do servidor Uvicorn logando eventos
+docker-compose logs -f api
 ```
 
-## Persistencia de dados
+## 3. Segurança e Considerações de Permissões POSIX
 
-Tudo que precisa sobreviver entre restarts deve ficar em `/app/data`:
+A maior armadilha no Docker com mapeamento `bind-mount` (o `-v ./data:/app/data`) é o conflito do UID/GID do usuário raiz do seu servidor com o UID/GID do Python rodando dentro do Ubuntu/Alpine da Imagem.
 
-- `notebooks.db`
-- jobs JSON
-- artefatos
-- storage state
-- PID/log (se usar CLI dentro do container)
-
-Sem volume, esses dados se perdem ao recriar o container.
-
-## Healthcheck manual
-
-```bash
-curl -s http://127.0.0.1:8080/health
-```
-
-Resposta esperada:
-
-```json
-{"status":"ok"}
-```
-
-## Logs e diagnostico
-
-```bash
-docker logs -f notebooklm-api
-```
-
-Para shell dentro do container:
-
-```bash
-docker exec -it notebooklm-api /bin/bash
-```
-
-## Atualizacao de imagem
-
-Fluxo tipico:
-
-1. build nova tag
-2. parar/remover container antigo
-3. subir novo container com mesmo volume
-
-Exemplo:
-
-```bash
-docker stop notebooklm-api && docker rm notebooklm-api
-docker build -t notebooklm-api:latest .
-docker run -d --name notebooklm-api -p 8080:8080 -v "$PWD/data:/app/data" notebooklm-api:latest
-```
-
-## Notas para VPS e Dokploy
-
-Em deploy gerenciado (Dokploy, Portainer, etc.):
-
-- mapear porta externa -> `8080`
-- montar volume persistente em `/app/data`
-- definir env vars no painel (ex.: `NOTEBOOKLM_MODE`, `LOG_LEVEL`)
-- configurar health check para `GET /health`
-
-Para modo real:
-
-- garantir `storage_state.json` valido dentro do volume
-- proteger acesso da API com rede privada, firewall ou reverse proxy
-
-## Boas praticas
-
-- pin de tag de imagem em producao (evitar `latest` sem controle)
-- backup regular do volume `data`
-- permissao de escrita no host para `data/`
-- monitorar crescimento de `data/artifacts` e `data/jobs`
+Se a aplicação Docker lançar exceções de *Access Denied* ao tentar salvar:
+1. Certifique-se de pre-criar o diretório `/data` no host local e aplicar `chmod 777 -R ./data` temporariamente para garantir acesso global, ou;
+2. Descubra o UID do contêiner e utilize um `chown` na pasta hospedada.
+3. Não versionar a pasta `data/` no seu Git, pois carrega seus cookies e áudios privativos. O arquivo `.gitignore` do repositório já se responsabiliza por isso nativamente.

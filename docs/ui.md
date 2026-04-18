@@ -1,137 +1,56 @@
-# UI guide
+# Interface do Usuário (Web UI)
 
-## Visao geral
+Enquanto a premissa primária do projeto seja uma API REST orientada a integrações de sistemas de terceiros (como N8N, Make, ou front-ends React isolados), a API também despacha de forma nativa e embutida uma aplicação Web Server-Rendered.
 
-A interface web em `GET /` e uma console operacional para:
+Isso é excelente para finalidades de Debug, acompanhamento manual de processos, gerência de dados e operação assistida do dia-a-dia.
 
-- importar storage state
-- criar/sincronizar/remover notebooks
-- adicionar fontes (unica e lote)
-- criar jobs de audio/video
-- monitorar jobs, logs, resultado e download de artefatos
+Acesse a UI rodando o server e acessando a raiz `http://127.0.0.1:8080/`.
 
-Stack de UI:
+---
 
-- Jinja2 (server-rendered)
-- HTMX (interacoes sem SPA)
-- Tailwind CSS
+## 1. Stack Tecnológico da Interface
 
-Arquivos principais:
+Toda a web UI é servida via FastAPI e utiliza os seguintes padrões:
+- **Rotas HTML**: Contidas inteiramente no arquivo `app/web/routes.py`. As views processam as respostas via biblioteca padrão injetada `Jinja2`.
+- **Estilização Dinâmica**: Foram inseridas utility classes similares ao Tailwind diretamente no template central.
+- **Engine de Reatividade**: Utiliza a biblioteca [HTMX](https://htmx.org/) via CDN no header. O HTMX varre marcações especiais do HTML devolvendo novas fatias processadas da API para o DOM, provendo interatividade *Single Page Application* sem precisar escrever uma linha de Javascript complexo.
 
-- rotas web: `app/web/routes.py`
-- templates: `app/templates/index.html` e `app/templates/partials/*`
-- estilo: `app/static/styles.css`
+---
 
-## Como acessar
+## 2. Tabelas e HTMX (A mágica do Polling)
 
-1. iniciar API: `notebooklmapi start`
-2. abrir `http://127.0.0.1:8080/`
+A aplicação conta com dois módulos centrais de exibição.
 
-## Secoes da tela
+### Gerenciador de Notebooks (Cadernos)
+Tabela carregada sob o endpoint `/web/notebooks` com parciais do HTML Jinja. Lista e permite exclusões síncronas através de botões HTTP `hx-delete` e confirmações amigáveis no navegador.
 
-### 1) Auth status
+### Tabela de Jobs (Acompanhamento Real-Time)
+É a *killer feature* nativa da observabilidade. O arquivo de template `app/templates/partials/jobs_table.html` lista todos os IDs do disco.
+A raiz da div possui a marcação `hx-get="/web/jobs" hx-trigger="every 5s"`.
 
-No topo, a UI mostra:
+Isso provoca recarregamentos dinâmicos, que exibem de forma visual (com badges coloridas) o avanço dos arquivos `JobStatus` do backend de `running` para `completed`.
 
-- estado atual (`Conectado`, `Configurado` ou `Pendente`)
-- contagem de cookies quando disponivel
-- detalhe retornado por `/auth/status`
+---
 
-### 2) Importar Storage State
+## 3. Preservação de Estado `<details>` UX
 
-Formulario com JSON de storage state. Pode ser o objeto Playwright completo ou apenas um array JSON bruto de cookies (que sera convertido automaticamente).
+Devido a natureza de polling agressivo (atualização a cada 5 segundos da tabela inteira pelo HTMX), se o usuário clicasse no accordion HTML genérico nativo `<details>` para investigar e abrir o Log daquele Job, a tabela desabaria instantes depois e fecharia o Log (perdendo estado natural do HTML renderizado).
 
-- endpoint interno: `POST /web/auth/storage-state`
-- retorno em card de resultado com status/tempo e refresh automatico da pagina para atualizar o status no topo.
+Para consertar isso e entregar uma experiência rica, inserimos no script base do front-end (`index.html`) duas interceptações nativas de LifeCycle do HTMX:
+- `htmx:beforeSwap`: Grava na RAM do navegador (JavaScript `Set`) todos os `<details>` abertos na tela que contêm o ID único que modelamos para eles.
+- `htmx:afterSwap`: Reconstrói a tabela do DOM re-injetando o atributo estático `open` nas respectivas tags gravadas na RAM do browser.
 
-### 3) Criar notebook e sincronizar
+Assim, o usuário pode ler pacificamente relatórios massivos JSON contidos no painel enquanto a página ao redor evolui, brilha e carrega sem interrupção agressiva da leitura.
 
-- criar: `POST /web/notebooks/create`
-- sync conta->SQLite: `POST /web/notebooks/sync`
+---
 
-### 4) Fontes
+## 4. O Botão "Baixar Remoto"
 
-- fonte unica: `POST /web/sources/text`
-- lote JSON: `POST /web/sources/batch`
+Recentemente integrados a funcionalidade do "Download Tardio e de Resgate" do Backend.
 
-Ambos aceitam `notebook_id` ou `local_id`.
+A tabela exibe Jobs em estado `completed` que já perderam suas conexões e nunca mais precisariam de alteração. Entretanto, caso a inicialização nativa faça o Sync iterativo, jobs passados da conta do Usuário ganham vida local e aparecem como Concluídos sem um arquivo linkado (são gerados a partir da listagem oficial).
 
-### 5) Jobs de audio e video
-
-- audio: `POST /web/jobs/audio`
-- video: `POST /web/jobs/video`
-
-Criacao e assincrona. A UI mostra `job_id` imediatamente.
-
-### 6) Painel de resultado de acoes
-
-Area `#action-result` recebe respostas HTML parciais (cards):
-
-- sucesso/erro
-- mensagem de retorno
-- payload de detalhes em JSON
-- tempo de execucao da acao
-
-### 7) Tabela de notebooks
-
-- render parcial: `partials/notebooks_table.html`
-- refresh automatico: `every 5s`
-- acao de delecao com confirmacao HTMX
-
-Colunas:
-
-- `local_id`
-- `notebook_id`
-- titulo
-- source_count
-- artifact_count
-- origem
-- acoes
-
-### 8) Tabela de jobs com debug
-
-- render parcial: `partials/jobs_table.html`
-- refresh automatico: `every 3s`
-- filtro por `job_id` e `name`
-
-Para cada job, a UI mostra:
-
-- status (`queued`, `running`, `completed`, `failed`)
-- notebook alvo
-- duracao
-- link de download (quando existe artefato)
-- bloco expansivel com logs por etapa e resultado JSON
-
-## Downloads e artefatos
-
-Quando `artifact_path` existe no job, a tabela exibe link:
-
-- `GET /artifacts/{job_id}`
-
-Se o arquivo nao estiver pronto, o endpoint devolve erro (ex.: `409`).
-
-## Fluxo recomendado de uso (operacao manual)
-
-1. importar storage state
-2. criar notebook ou sincronizar conta
-3. adicionar fontes
-4. iniciar job de audio/video
-5. acompanhar status em jobs
-6. baixar artefato
-
-## Logs e debug pratico
-
-Para investigar falhas:
-
-1. abrir detalhes do job
-2. checar `stage` e `message` em ordem temporal
-3. revisar `result` ou `error`
-4. validar auth no topo da pagina
-
-## Limitacoes atuais
-
-- sem autenticacao propria da UI (uso operacional local/rede confiavel)
-- sem pagina de historico paginada (carrega ultimos registros)
-- sem upload de arquivo binario de fonte (foco em texto)
-
-Para operacao em producao, considere proteger acesso por proxy reverso/autenticacao externa.
+Ao invés de barrar a interface, um botão renderizado condicionalmente pelo Jinja2 permite acionar a rota `/web/jobs/{job_id}/download-remote`.
+- Ele emite uma promessa visual instantânea recarregando o card, informando "Baixando remotamente...".
+- Ao fundo, disparamos a Task assíncrona do Python `_background_download` contida no `job_service.py` injetado pelo Router.
+- O botão se inativará quando o Polling visual da tabela perceber que o arquivo chegou fisicamente no caminho local `data/artifacts/`.

@@ -1,73 +1,69 @@
-# notebooklm-api docs
+# Guia e Arquitetura - NotebookLM API
 
-## Visao geral
+A documentação da `notebooklm-api` foi idealizada como um manual de operações completo. Este documento serve como índice para aprofundamento nos módulos específicos, além de apresentar a arquitetura técnica da solução.
 
-`notebooklm-api` e um projeto HTTP-first para operar NotebookLM com tres interfaces:
+## Visão Estrutural
 
-- API REST (FastAPI)
-- CLI (`notebooklmapi`)
-- UI web server-rendered (`/`)
+O projeto foi construído para encapsular a natureza "instável" de requisições de scraper da integração com o NotebookLM e envelopá-la em uma abstração programática previsível, orientada a status de Jobs Assíncronos.
 
-O foco do projeto e oferecer operacao programatica previsivel para:
+Ao invés de simplesmente expor endpoints REST com respostas bloqueantes de vários minutos, o sistema opera utilizando:
+- **Backend HTTP (FastAPI)** provendo portas `/jobs`, `/operations` com `HTTP 202 Accepted`.
+- **Fila de Background (`JobService`)** para gerenciar threads isoladas e relatar o status a cada atualização ou erro.
+- **Camada Persistente SQLite** com referências de `local_id` vs `notebook_id` do Google.
+- **Fallback e Retentativas** para capturar URLs de arquivos gerados tardiamente pelo Google.
 
-- criar/remover notebooks
-- enviar fontes textuais
-- gerar audio/video
-- acompanhar jobs assincronos com logs detalhados
-- manter catalogo local em SQLite sincronizado com a conta
+## Mapa do Manual
 
-## Arquitetura resumida
+Navegue abaixo por cada pilar da solução baseando-se em sua responsabilidade técnica. Se você encontrar inconsistências, estas documentações mapeiam **exatamente** o que o código faz hoje.
 
-Fluxo de alto nivel:
+1. **[Referência da API REST](api.md)**
+   > Modelos Pydantic, Payload JSON, Endpoints `/auth`, `/jobs`, `/operations`, `/notebooks` e respostas HTTP.
 
-1. Cliente (curl, n8n, UI, app interna) chama API/CLI.
-2. Rotas em `app/api/routes/*` validam payloads (Pydantic).
-3. Servicos em `app/services/*` executam regras de negocio.
-4. Persistencia local:
-   - notebooks em `data/notebooks.db`
-   - jobs em `data/jobs/*.json`
-   - artefatos em `data/artifacts`
-5. Adapter NotebookLM (`real` ou `mock`) executa operacoes remotas.
+2. **[Utilitário CLI (`notebooklmapi`)](cli.md)**
+   > Gerenciamento do daemon, setup de ambiente, listas remotas e validações via linha de comando local.
 
-Componentes principais:
+3. **[Fluxo de Autenticação & Cookies](auth.md)**
+   > Explica a dependência do `storage_state.json` (Playwright), extração de cookies e limitações do modo `real`.
 
-- `app/main.py`: bootstrap, DI via `app.state`, roteadores e lifespan
-- `app/services/notebooklm_service.py`: adapter `real`/`mock`
-- `app/services/notebook_catalog_service.py`: sincronizacao conta <-> SQLite
-- `app/services/job_service.py`: fila local por thread + pipeline de execucao
-- `app/web/routes.py`: UI para operacao manual e debug
+4. **[Pipelines Assíncronos & Jobs](jobs.md)**
+   > Polling local, ThreadPools, status de lifecycle, extração de título original do artefato e fluxo do Fallback de Timeout.
 
-## Modos de execucao
+5. **[Modelagem de Cadernos & Fontes (Notebooks)](notebooks.md)**
+   > Sync local de catálogo SQLite, relação de arquivos com contas remotas. Diferenças do Local ID e UUID Google.
 
-### Modo real (padrao)
+6. **[Experiência de Usuário: UI Web](ui.md)**
+   > O front-end em HTMX no `/` que usa renderizações Jinja2 para observar tempo real sem quebrar estado HTML.
 
-- Config: `NOTEBOOKLM_MODE=real`
-- Requer storage state valido (`data/auth/storage_state.json`)
-- Usa adapter de integracao com `notebooklm-py` (nao oficial)
-- Ideal para operacao real
+7. **[Deploy e Contêineres (Docker)](docker.md)**
+   > Mapeamento de volumes da `data/`, como segregar variáveis sensíveis e gerir permissões POSIX de runtime.
 
-### Modo dev/mock
+8. **[Solução de Problemas (Troubleshooting)](troubleshooting.md)**
+   > Se o download retornou `409 Conflict`, o auth caiu, o cookie "SID" sumiu, ou o "job ID sumiu", veja esta seção de respostas.
 
-- Config: `NOTEBOOKLM_MODE=mock` ou `notebooklmapi start --dev`
-- Nao depende de sessao real Google/NotebookLM
-- Gera artefatos fake (WAV/MP4) para validar pipeline
-- Ideal para desenvolvimento local, testes e CI
+## Arquitetura: Direcionamento do `app/`
 
-## Estrutura de documentacao
+Tudo se conecta na root FastAPI em `app/main.py`. As injeções passam pelos endpoints recebendo serviços pré-estanciados em `app.state`.
 
-- [`docs/api.md`](./api.md): contratos HTTP, rotas, payloads, status codes, exemplos curl/n8n
-- [`docs/cli.md`](./cli.md): comandos, comportamento, arquivos gerados e fluxo operacional
-- [`docs/auth.md`](./auth.md): storage state, login assistido, `/auth/status`, seguranca
-- [`docs/jobs.md`](./jobs.md): modelo de jobs, status, polling, logs, artefatos, limpeza
-- [`docs/notebooks.md`](./notebooks.md): ciclo de vida de notebooks, SQLite e sincronizacao
-- [`docs/ui.md`](./ui.md): uso da interface web, telas, debug e operacao diaria
-- [`docs/docker.md`](./docker.md): build/run, volumes, persistencia, variaveis e notas para VPS
-- [`docs/troubleshooting.md`](./troubleshooting.md): problemas comuns e correcoes praticas
+```text
+app/
+├── api/
+│   └── routes/      <- Camada Web: Valida schemas Pydantic e aciona as funções core. (FastAPI APIRouter)
+├── core/            <- Pydantic Settings, inicialização base e formato de log root.
+├── models/          <- DTOs: Representações REST e validação restrita (Pydantic). Enumerações exatas do sistema.
+├── services/        <- Lógica Pura (JobService, NotebookLMService, Catalog): Operações e persistência de dados.
+├── templates/       <- Camada View: Componentes parciais Jinja2 (jobs_table, notebooks_table) consumidos pelo HTMX.
+├── utils/           <- Funções Helpers estáticas (timers, file sanitize).
+└── web/             <- Endpoints exclusivos HTML p/ consumo humano via Navegador.
+```
 
-## Comeco rapido
+## Como a aplicação opera?
+1. Uma automação chama o `/operations/audio-summary?async=true` informando o ID do Notebook.
+2. A camada da **API** traduz o JSON para `GenerateAudioSummaryJobRequest`.
+3. Chama o **JobService** (injetado via `app.state`).
+4. O `JobService` cria o Job em memória no disco `data/jobs/{id}.json` (em modo `queued`).
+5. A Background Thread pega esse Job e muda para `running`, disparando requisições com a lib interna `notebooklm_service`.
+6. O status remoto vira `waiting_remote`, enquanto o Job faz polling (`ARTIFACT_POLL_INTERVAL_SECONDS`) em busca de conclusão e salva tudo internamente (`.log` do job).
+7. Se um timeout acontecer, a lógica de Fallback descobre o arquivo e efetua o download em `data/artifacts/`.
+8. O status se torna `completed`.
 
-1. Rode `notebooklmapi setup`
-2. Rode `notebooklmapi start` (ou `notebooklmapi start --dev`)
-3. Verifique `GET /health`
-4. Configure auth em `/auth/storage-state` (modo real)
-5. Consulte `docs/api.md` para fluxos sync/async
+Toda essa operação é visível simultaneamente se alguém abrir a **UI web**, graças aos parciais HTMX atualizando a leitura JSON do `JobService`.

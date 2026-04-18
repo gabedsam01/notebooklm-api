@@ -1,417 +1,133 @@
-# notebooklm-api
+# NotebookLM API
 
-API independente para operar NotebookLM de forma programatica (HTTP-first), com CLI e UI web.
+A **NotebookLM API** é uma solução independente para operar o [NotebookLM do Google](https://notebooklm.google.com/) de forma programática (HTTP-first), oferecendo interfaces via **API REST (FastAPI)**, um utilitário **CLI (`notebooklmapi`)**, e uma **UI Web Server-rendered**.
 
-O projeto foi desenhado para automacoes (curl, n8n, scripts), com foco em:
+Este projeto foi desenhado primariamente para possibilitar automações (n8n, curl, scripts customizados) extraindo dados e resumos multimodais de cadernos (notebooks) com previsibilidade, fila de processamento local, e um log minucioso para cada operação.
 
-- jobs assincronos com logs detalhados
-- operacoes sincronas com retorno binario direto (audio/video)
-- catalogo local de notebooks em SQLite
-- modo real e modo mock para desenvolvimento/testes
+---
 
-## Features
+## 🚀 Principais Recursos
 
-- API FastAPI com rotas para auth, notebooks, fontes, jobs, operacoes e artefatos
-- CLI `notebooklmapi` para setup, start/stop/status, list/sync e delete
-- UI web server-rendered para operacao manual e debug
-- persistencia local:
-  - notebooks em `data/notebooks.db`
-  - jobs em `data/jobs/*.json`
-  - artefatos em `data/artifacts`
-- suporte a `notebook_id` e `local_id` em endpoints-chave
-- fluxo async (`202` + polling) e sync (arquivo binario no mesmo request)
+- **API FastAPI Extensível**: Rotas totalmente tipadas (via Pydantic) cobrindo notebooks, upload de fontes (únicas ou em lote), jobs, operações de IA (resumos em áudio e vídeo), e autenticação.
+- **Fila Assíncrona e Logs Locais**: Geração de mídia (WAV/MP4) através de Jobs com sistema de pooling, acompanhamento em tempo real, fallback de descoberta de artefato e tratamento de tolerância a falhas.
+- **Integração Real e Mock**: Modo `real` integrando-se via lib comunitária `notebooklm-py` ao Google e modo `mock` para testar fluxos no desenvolvimento sem bater em serviços externos.
+- **Catálogo Offline Sincronizado**: Persistência de Notebooks em SQLite com referenciamento cruzado (ID local vs ID remoto).
+- **UI de Observabilidade**: Visualizador web (HTMX + Jinja2) em tempo real da execução dos jobs, gerenciador de notebooks, e facilidade para "Baixar remoto".
 
-## Arquitetura
+---
 
-Resumo dos blocos principais:
+## 🏗️ Arquitetura Resumida
 
-- `app/main.py`: bootstrap da app, DI via `app.state`, rotas e lifespan
-- `app/api/routes/*`: endpoints HTTP
-- `app/services/notebooklm_service.py`: adapter NotebookLM (`real`/`mock`)
-- `app/services/notebook_catalog_service.py`: sincronizacao conta <-> SQLite
-- `app/services/job_service.py`: fila local + execucao assincrona em thread
-- `app/web/routes.py` + templates: UI web (Jinja2 + HTMX)
+O sistema obedece um padrão de Injeção de Dependências em FastAPI (`app.state`), permitindo um desacoplamento forte entre as camadas:
 
-Modo de execucao:
+- **Roteadores HTTP (`app/api/routes` e `app/web/routes.py`)**: Validação de payload.
+- **Serviços de Negócio (`app/services/*`)**:
+  - `NotebookLMService`: Comunicação externa (`real` ou `mock`).
+  - `JobService`: Pipeline assíncrono em *thread background*, fallback timeout, conversão para MP4/WAV.
+  - `NotebookCatalogService`: Banco de dados SQLite, controle de órfãos, e sincronização `local_id`.
+  - `StorageStateService`: Conversão e injeção do arquivo mágico (`storage_state.json`) de Auth.
 
-- `NOTEBOOKLM_MODE=real` (padrao)
-- `NOTEBOOKLM_MODE=mock` (dev/test)
+---
 
-## Instalacao
+## 🛠️ Instalação e Execução
 
-### Pre-requisitos
+### Pré-requisitos
+- Python >= 3.11
+- Gerenciador de pacote (como pip ou pipx)
 
-- Python `>=3.11`
-- pip
-
-### Como o comando `notebooklmapi` e instalado
-
-O comando vem de `project.scripts` do `pyproject.toml` (`notebooklmapi = "app.cli:main"`).
-
-Importante: diferente de npm global, ele nao vira um binario global automaticamente
-so por existir no repositorio. Voce precisa instalar o pacote em algum ambiente Python
-(venv, pipx, etc.).
-
-### Modo 1 (recomendado): venv ativado
+### Instalando e Ligando
+Recomendamos o uso com ambiente virtual ou `pipx`. O pacote fornece o comando CLI nativo `notebooklmapi`.
 
 ```bash
-cd ~/Documentos/notebooklm-api
+git clone https://github.com/gabedsam01/notebooklm-api.git
+cd notebooklm-api
+
+# 1. Cria o ambiente, instala dependências e inicializa arquivos base (como .env)
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .[dev]
 
+# 2. Roda a configuração inicial (cria diretórios, base de dados SQLite)
 notebooklmapi setup
+
+# 3. Dá o start na API em background (Porta 8080)
 notebooklmapi start
 ```
 
-### Modo 2: sem ativar venv
+### Configurações Importantes (`.env`)
+Após o setup, o `.env` gerado tem o essencial:
+```ini
+# Configuração base de acesso da API
+APP_HOST=0.0.0.0
+APP_PORT=8080
 
-```bash
-cd ~/Documentos/notebooklm-api
-python3 -m venv .venv
-.venv/bin/pip install -e .[dev]
+# Modo de integração: 'real' para integração com a conta do Google ou 'mock' para testes falsos
+NOTEBOOKLM_MODE=real
 
-.venv/bin/notebooklmapi setup
-.venv/bin/notebooklmapi start
+# Locais de Arquivos
+DATA_DIR=data
+SQLITE_DB_PATH=data/notebooks.db
+STORAGE_STATE_PATH=data/auth/storage_state.json
+
+# Controle de Resiliência de Job
+ARTIFACT_WAIT_TIMEOUT_SECONDS=1800
+ARTIFACT_POLL_INTERVAL_SECONDS=15.0
 ```
 
-### Modo 3: instalacao global isolada com pipx
+---
 
-```bash
-cd ~/Documentos/notebooklm-api
-pipx install .
-```
+## 💻 Visão Geral dos Comandos CLI
 
-## Configuracao (`.env`)
+O aplicativo exporta o CLI interativo `notebooklmapi`. Ele controla o estado do daemon, listas, e integridade.
 
-Base recomendada: copiar de `.env.example`.
+| Comando | Descrição |
+| --- | --- |
+| `notebooklmapi setup` | Valida Python, instala pacotes, inicializa `.env` e prepara pastas do sistema (`data/`). |
+| `notebooklmapi start` | Lança a aplicação daemonizada usando uvicorn. Grava PID e envia saída para `.log`. |
+| `notebooklmapi start --dev`| Lança a aplicação em modo Mock (força `NOTEBOOKLM_MODE=mock`). |
+| `notebooklmapi status` | Informa se a aplicação está online, rodando em qual porta e em qual PID. |
+| `notebooklmapi off` | Finaliza a aplicação via arquivo PID usando `SIGTERM` (e depois `SIGKILL` como fallback). |
+| `notebooklmapi list` | Sincroniza e lista o catálogo de Notebooks (Remoto vs Local). Exibe orfãos deletados. |
+| `notebooklmapi list --dev` | Lista o catálogo falso em modo mock para testes. |
+| `notebooklmapi delete <id>`| Deleta um notebook de forma programática. Remove remoto e limpa registro local em cascata. |
 
-Variaveis principais:
+---
 
-- `APP_HOST` (default `0.0.0.0`)
-- `APP_PORT` (default `8080`)
-- `NOTEBOOKLM_MODE` (`real` ou `mock`, default `real`)
-- `DATA_DIR` (default `data`)
-- `SQLITE_DB_PATH` (default `data/notebooks.db`)
-- `STORAGE_STATE_PATH` (default `data/auth/storage_state.json`)
+## 🌐 Visão Geral da API REST
 
-Timeouts (artefatos longos):
+A API roda por padrão em `http://127.0.0.1:8080`.
+Ela é focada na transição fluida entre fluxos Assíncronos (Jobs) ou Síncronos.
 
-- `ARTIFACT_WAIT_TIMEOUT_SECONDS` (default `1800` - 30 min)
-- `ARTIFACT_POLL_INTERVAL_SECONDS` (default `15.0`)
-- `AUDIO_WAIT_TIMEOUT_SECONDS` (opcional, sobrescreve `ARTIFACT_WAIT_TIMEOUT_SECONDS` para audio)
-- `VIDEO_WAIT_TIMEOUT_SECONDS` (opcional, sobrescreve `ARTIFACT_WAIT_TIMEOUT_SECONDS` para video)
+### Módulos (Grupos de Rotas)
+1. **Auth (`/auth/*`)**: Gerenciamento do Storage State para login real no NotebookLM.
+2. **Notebooks (`/notebooks/*`)**: Inclusão, Visualização e Deleção (por `local_id` ou `notebook_id`), e Sincronização em Lote (`/notebooks/sync`).
+3. **Sources (`/sources/*`)**: Inclusão de textos isolados ou múltiplos (*batching* automático).
+4. **Operations (`/operations/*`)**: Core principal. Aciona resumos com prompts (`/operations/audio-summary` e `/operations/video-summary`). Retornam 202 Async ou arquivo direto.
+5. **Jobs (`/jobs/*`)**: Fila local persistida em JSON em disco para acompanhar a evolução de Operations, logs do que ocorre dentro das chamadas.
+6. **Artifacts (`/artifacts/*`)**: Download final do aquivo MP4 / WAV concluído pelo Job.
 
-Observacao: `NOTEBOOKLM_STORAGE_STATE_PATH` e aceito como alias legado.
+> **💡 Dica:** Se `async=true` (padrão) nas operações, a API responde `HTTP 202 Accepted` e um ID de Job. O arquivo será criado no diretório `data/artifacts/` eventualmente. Se `async=false`, a chamada TCP da requisição fica aberta e só responde retornando o arquivo em buffer nativo.
 
-## Uso CLI
+---
 
-Comandos principais:
+## 📚 Documentação Exaustiva (Manual Oficial)
 
-- `notebooklmapi setup`
-- `notebooklmapi start`
-- `notebooklmapi start --dev`
-- `notebooklmapi off`
-- `notebooklmapi status`
-- `notebooklmapi list`
-- `notebooklmapi list --dev`
-- `notebooklmapi delete <notebook_id>`
+A API e suas especificidades superam a capacidade deste README. O projeto contém uma documentação modular conectada contendo as regras e capacidades atuais exatas:
 
-### O que cada comando faz
+- [Visão Geral & Índice](docs/index.md): Um sumário abrangente detalhando a arquitetura.
+- [Referência Completa da API](docs/api.md): Todos os enums, modelos Pydantic, limitações de campos de Request e exemplos práticos para Postman ou Curl.
+- [Ciclo de Vida de Jobs & Artefatos](docs/jobs.md): Como funciona o tracking em background, descoberta proativa (fallback), e download remoto.
+- [Referência Autenticação](docs/auth.md): Entenda o `storage_state.json` exigido pela integração, cookies que importam e o assistente de Start/Complete.
+- [Referência Notebooks & Fontes](docs/notebooks.md): Compreenda a diferença entre o `local_id` do banco e o ID nativo da API do Google.
+- [Interface Gráfica (UI Web)](docs/ui.md): Um guia rápido sobre o visualizador de tempo real e logs expansíveis na root local `/`.
+- [Referência CLI](docs/cli.md): Como o motor do `.venv` funciona atrás de cada comando e manipulação de PID.
+- [Containers (Docker)](docs/docker.md): Como colocar para rodar no Docker e configurações recomendadas de segurança para deploy na VPS.
+- [Guia de Troubleshooting](docs/troubleshooting.md): Como destrinchar o log, timeouts de job que estouraram, ou erros do `notebooklm-py` de autenticação.
 
-#### `setup`
+---
 
-- cria `.venv` se necessario
-- instala deps (`-e .[dev]`)
-- cria `.env` se faltar
-- prepara diretorios e valida boot
+## ⚠️ Limitações Conhecidas
 
-#### `start`
-
-- sobe API em background em `0.0.0.0:8080`
-- grava PID em `data/run/notebooklmapi.pid`
-- grava logs em `data/run/notebooklmapi.log`
-
-#### `start --dev`
-
-- igual ao `start`, mas forcando `NOTEBOOKLM_MODE=mock`
-
-#### `off`
-
-- encerra processo por PID file (SIGTERM, fallback SIGKILL)
-
-#### `status`
-
-- informa online/offline, PID e log file
-
-#### `list` / `list --dev`
-
-- sincroniza conta remota com SQLite local
-- imprime:
-  - encontrados no Google
-  - encontrados no banco
-  - adicionados
-  - removidos
-- em indisponibilidade remota, ainda mostra estado local
-
-#### `delete <notebook_id>`
-
-- tenta remover remoto
-- remove local se existir
-- mostra `deleted_remote`, `deleted_local`, `detail`
-
-## Uso API
-
-Base URL local: `http://127.0.0.1:8080`
-
-### Rotas principais
-
-- health:
-  - `GET /health`
-- auth:
-  - `GET /auth/status`
-  - `POST /auth/storage-state`
-  - `POST /auth/login/start`
-  - `POST /auth/login/complete`
-- notebooks:
-  - `POST /notebooks`
-  - `GET /notebooks`
-  - `POST /notebooks/sync`
-  - `GET /notebooks/{notebook_id}`
-  - `DELETE /notebooks/{notebook_id}`
-  - `DELETE /notebooks/local/{local_id}`
-- sources:
-  - `POST /sources/text`
-  - `POST /sources/batch`
-- jobs:
-  - `POST /jobs`
-  - `GET /jobs/{job_id}`
-  - `GET /jobs?job_id=...&name=...`
-- operacoes:
-  - `POST /operations/audio-summary?async=true|false`
-  - `POST /operations/video-summary?async=true|false`
-- artefatos:
-  - `GET /artifacts/{job_id}`
-
-### Payloads e respostas
-
-- requests em JSON: `Content-Type: application/json`
-- respostas de sucesso:
-  - JSON em endpoints de dados/jobs
-  - binario (`audio/wav`, `video/mp4`) em operacoes sync
-- erros: padrao `{"detail":"..."}`
-
-Status codes comuns:
-
-- `200`, `201`, `202`, `400`, `404`, `409`, `422`
-
-### Async vs sync
-
-#### Async (`async=true`, default)
-
-1. cria job (`202`)
-2. consulta status em `/jobs/{job_id}`
-3. baixa arquivo em `/artifacts/{job_id}`
-
-#### Sync (`async=false`)
-
-- a chamada bloqueia ate gerar/baixar artefato
-- retorno e arquivo binario direto
-
-### Exemplo curl: importar storage state
-
-```bash
-curl -X POST http://127.0.0.1:8080/auth/storage-state \
-  -H "Content-Type: application/json" \
-  -d '{
-    "cookies": [
-      {
-        "name": "SID",
-        "value": "...",
-        "domain": ".google.com",
-        "path": "/",
-        "httpOnly": true,
-        "secure": true,
-        "sameSite": "Lax"
-      }
-    ],
-    "origins": []
-  }'
-```
-
-### Exemplo curl: audio async
-
-```bash
-curl -X POST "http://127.0.0.1:8080/operations/audio-summary?async=true" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "notebook_id": "<id>",
-    "mode": "debate",
-    "language": "pt-BR",
-    "duration": "standard",
-    "focus_prompt": "Pontos principais"
-  }'
-```
-
-### Exemplo curl: audio sync (arquivo direto)
-
-```bash
-curl -X POST "http://127.0.0.1:8080/operations/audio-summary?async=false" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "notebook_id": "<id>",
-    "mode": "summary",
-    "language": "pt-BR",
-    "duration": "standard",
-    "focus_prompt": "Resumo objetivo"
-  }' \
-  --output audio.wav
-```
-
-### Exemplo n8n (fluxo recomendado)
-
-1. HTTP Request -> `POST /operations/audio-summary?async=true`
-2. loop de polling -> `GET /jobs/{job_id}`
-3. condicao `status == completed`
-4. HTTP Request (download file) -> `GET /artifacts/{job_id}`
-
-## Uso UI
-
-Abra `http://127.0.0.1:8080/`.
-
-A UI oferece:
-
-- import de storage state
-- criacao/sync/delecao de notebooks
-- envio de fontes (unica/lote)
-- criacao de job de audio/video
-- tabela de jobs com logs e resultado
-- download de artefatos
-
-Atualizacao automatica:
-
-- notebooks: a cada 5s
-- jobs: a cada 3s
-
-## SQLite
-
-Banco local: `data/notebooks.db`.
-
-Campos persistidos do notebook:
-
-- `id` (`local_id`)
-- `notebook_id`
-- `title`
-- `source_count`
-- `artifact_count`
-- `origin`
-- `metadata_json`
-- `created_at`
-- `updated_at`
-
-Sincronizacao conta <-> banco:
-
-- importa notebooks remotos faltantes
-- remove locais orfaos
-
-## Auth NotebookLM
-
-Modo `real` depende de storage state com cookies validos.
-
-Checklist:
-
-1. `POST /auth/storage-state`
-2. `GET /auth/status`
-3. confirmar `storage_state_present=true` e `notebooklm_access_ok=true`
-
-Notas importantes:
-
-- integracao real usa biblioteca nao oficial (`notebooklm-py`)
-- `storage_state.json` deve ser tratado como segredo
-- arquivo e salvo com permissao restrita (`0600`)
-
-## Docker
-
-### Build
-
-```bash
-docker build -t notebooklm-api:latest .
-```
-
-### Run
-
-```bash
-docker run -d --name notebooklm-api \
-  -p 8080:8080 \
-  -v "$PWD/data:/app/data" \
-  notebooklm-api:latest
-```
-
-### Run em mock
-
-```bash
-docker run -d --name notebooklm-api \
-  -p 8080:8080 \
-  -v "$PWD/data:/app/data" \
-  -e NOTEBOOKLM_MODE=mock \
-  notebooklm-api:latest
-```
-
-### Stop
-
-```bash
-docker stop notebooklm-api
-docker rm notebooklm-api
-```
-
-## Testes
-
-Com venv:
-
-```bash
-.venv/bin/python -m pytest
-```
-
-Cobertura atual inclui:
-
-- health e home
-- auth (storage-state e login assistido)
-- persistencia SQLite de notebooks
-- sync import/remove entre conta e banco
-- sources unica/lote com `notebook_id` ou `local_id`
-- operacoes async e sync (audio/video)
-- fluxo de delecao remoto/local
-- comportamento de CLI (`start --dev`, `list`, status/off)
-
-## Troubleshooting (resumo)
-
-Problemas comuns:
-
-- `command not found` para `notebooklmapi`
-- venv quebrada/inconsistente
-- auth pendente ou sessao invalida
-- porta 8080 ocupada
-- `409` ao baixar artefato antes do job concluir
-- volume Docker sem persistencia/permissao
-
-Guia completo: `docs/troubleshooting.md`.
-
-## Roadmap
-
-- melhorar observabilidade (metricas e tracing)
-- opcao de worker externo/distribuido para jobs
-- politicas de limpeza/retencao para `data/jobs` e `data/artifacts`
-- melhorias de seguranca operacional (hardening para deploy publico)
-- evoluir compatibilidade com integracoes NotebookLM reais
-
-## Documentacao detalhada
-
-- `docs/index.md`
-- `docs/api.md`
-- `docs/cli.md`
-- `docs/auth.md`
-- `docs/jobs.md`
-- `docs/notebooks.md`
-- `docs/ui.md`
-- `docs/docker.md`
-- `docs/troubleshooting.md`
+- **Suporte Oficial**: O Google não possui uma API Rest pública para o NotebookLM. Esta aplicação provê e mapeia uma interface em cima do `notebooklm-py` através de extração de chamadas Playwright/cookies. É instável por natureza. Use cookies atualizados (`SID`, `HSID`, `SSID`, etc.).
+- **Tamanho de Fontes**: Operações em `/sources/batch` dependem da tolerância da requisição HTTP. Fontes massivas darão erro 400.
+- **Processamento Concorrente**: Diferentes de provedores serverless, os jobs são rodados em uma `ThreadPool` na máquina local para manter os metadados JSON do Job e sincronizar a persistência.

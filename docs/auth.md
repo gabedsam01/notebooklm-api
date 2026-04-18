@@ -79,8 +79,14 @@ Resposta:
 
 ```json
 {
-  "saved": true,
-  "detail": "Storage state salvo com sucesso."
+  "storage_state_present": true,
+  "storage_state_valid": true,
+  "cookie_count_received": 22,
+  "cookie_count_kept": 9,
+  "kept_cookie_names": ["SID", "HSID", "SSID"],
+  "has_minimum_auth_cookies": true,
+  "notebooklm_access_ok": false,
+  "detail": "Storage state filtrado e salvo com 9 cookies relevantes."
 }
 ```
 

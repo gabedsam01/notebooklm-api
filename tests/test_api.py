@@ -113,10 +113,11 @@ def test_auth_storage_state_status_and_assisted_login_flow(tmp_path: Path) -> No
     assert data["notebooklm_access_ok"] is True
 
     # Test saving raw list of cookies directly via POST
-    raw_list = [{"name": "raw_cookie", "value": "val", "domain": "example.com", "path": "/"}]
+    raw_list = [{"name": "SID", "value": "val", "domain": ".google.com", "path": "/"}]
     raw_save_response = client.post("/auth/storage-state", json=raw_list)
     assert raw_save_response.status_code == 200
-    assert raw_save_response.json()["saved"] is True
+    assert raw_save_response.json()["storage_state_present"] is True
+    assert raw_save_response.json()["cookie_count_kept"] == 1
 
     status_raw = client.get("/auth/status")
     assert status_raw.status_code == 200

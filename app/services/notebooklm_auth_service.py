@@ -12,6 +12,7 @@ from app.models.auth import (
     LoginStartResponse,
     StorageStatePayload,
     StorageStateSaveResponse,
+    StorageCookie,
 )
 from app.services.notebooklm_service import NotebookLMService
 from app.services.storage_state_service import StorageStateService
@@ -29,9 +30,58 @@ class NotebookLMAuthService:
         self._login_ttl_minutes = login_ttl_minutes
         self._sessions: Dict[str, _LoginSession] = {}
 
+    def is_relevant_domain(self, domain: str) -> bool:
+        relevant_domains = {".google.com", "google.com", "notebooklm.google.com", ".notebooklm.google.com"}
+        return domain in relevant_domains or any(domain.endswith(d) for d in relevant_domains)
+
+    def is_relevant_cookie(self, name: str) -> bool:
+        exact_names = {"SID", "HSID", "SSID", "SAPISID", "APISID", "OSID"}
+        if name in exact_names:
+            return True
+        if name.startswith("__Secure-") and ("PSID" in name or "PAPISID" in name or "OSID" in name):
+            return True
+        return False
+
+    def has_minimum_cookies(self, names: set[str]) -> bool:
+        # Pelo menos um cookie de sessao basico (SID) ou tokens mais modernos (1PSID)
+        return "SID" in names or any("1PSID" in n for n in names)
+
+    def filter_payload(self, payload: StorageStatePayload) -> tuple[StorageStatePayload, int, int, list[str], bool]:
+        original_count = len(payload.cookies)
+        filtered_cookies = []
+        kept_names = set()
+
+        for c in payload.cookies:
+            if self.is_relevant_domain(c.domain) and self.is_relevant_cookie(c.name):
+                filtered_cookies.append(c)
+                kept_names.add(c.name)
+
+        payload.cookies = filtered_cookies
+        kept_names_list = sorted(list(kept_names))
+        has_min = self.has_minimum_cookies(kept_names)
+
+        return payload, original_count, len(filtered_cookies), kept_names_list, has_min
+
     def save_storage_state(self, payload: StorageStatePayload) -> StorageStateSaveResponse:
-        self._storage_state_service.save(payload)
-        return StorageStateSaveResponse(saved=True, detail="Storage state salvo com sucesso.")
+        filtered_payload, received, kept, names, has_min = self.filter_payload(payload)
+        self._storage_state_service.save(filtered_payload)
+        
+        detail_msg = f"Storage state filtrado e salvo com {kept} cookies relevantes (de {received} recebidos)."
+        if not has_min:
+            detail_msg += " ALERTA: Conjunto de cookies parece fraco/incompleto para autenticação."
+        else:
+            detail_msg += " Conjunto parece suficiente para autenticação."
+
+        return StorageStateSaveResponse(
+            storage_state_present=True,
+            storage_state_valid=True,
+            cookie_count_received=received,
+            cookie_count_kept=kept,
+            kept_cookie_names=names,
+            has_minimum_auth_cookies=has_min,
+            notebooklm_access_ok=False,  # Será avaliado em status real
+            detail=detail_msg
+        )
 
     async def get_status(self, notebook_service: NotebookLMService) -> AuthStatusResponse:
         if not self._storage_state_service.exists():
@@ -43,7 +93,6 @@ class NotebookLMAuthService:
                 detail="Storage state ausente. Importe cookies em /auth/storage-state.",
             )
 
-        # Validate storage state format and count cookies
         raw_data = self._storage_state_service.load()
         storage_state_valid = False
         cookie_count = 0
@@ -92,6 +141,8 @@ class NotebookLMAuthService:
             self._sessions.pop(payload.session_id, None)
             return LoginCompleteResponse(completed=False, detail="Sessao de login expirada.")
 
-        self._storage_state_service.save(payload.storage_state)
+        # Re-use filter_payload before saving
+        filtered_payload, received, kept, names, has_min = self.filter_payload(payload.storage_state)
+        self._storage_state_service.save(filtered_payload)
         self._sessions.pop(payload.session_id, None)
-        return LoginCompleteResponse(completed=True, detail="Autenticacao assistida concluida.")
+        return LoginCompleteResponse(completed=True, detail="Autenticacao assistida concluida e cookies filtrados.")

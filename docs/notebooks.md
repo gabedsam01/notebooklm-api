@@ -1,5 +1,7 @@
 # Catálogo de Cadernos & SQLite
 
+> 💡 **Exemplos Práticos Disponíveis:** Códigos com CRUD completo de Notebooks em [curl](../use-http-curl/) e [Python](../use-python/).
+
 Todos os Notebooks do Google que você gerenciar via API são espelhados em um pequeno banco relacional físico de persistência local para entregar altíssima disponibilidade em consultas, poupar tráfego HTTP repetitivo no NotebookLM e manter metadados estruturados (contagem de fontes e de artes geradas).
 
 ## 1. O Banco Local (SQLite)

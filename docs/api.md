@@ -1,145 +1,178 @@
-# Referência Oficial da API REST
+# Referência Oficial da API REST e Modelos de Dados
 
-Este documento detalha todos os endpoints, modelos e comportamentos disponíveis em `app/api/routes`.
+Este documento detalha exaustivamente todos os endpoints, parâmetros, esquemas Pydantic e enumerações do projeto `notebooklm-api`.
 
-Todas as requisições (exceto para `multipart/form-data`) esperam JSON em codificação padrão UTF-8 e enviam JSON como reposta, a menos que operem no modo `sync=false`, onde retornarão um binário (`audio/wav`, `video/mp4`). 
+> 💡 **Exemplos Práticos Disponíveis!**
+> Para evitar suposições, documentamos scripts completos "Copiar e Colar" consumindo cada endpoint listado abaixo. Consulte:
+> - 👉 [**Exemplos em `curl` (Terminal)**](../use-http-curl)
+> - 👉 [**Exemplos em `Python` (Requests)**](../use-python)
 
-> **Aviso de Base URL:** Caso suba no default, a base path é `http://127.0.0.1:8080/`.
+Todas as requisições aguardam e enviam `application/json` codificado em UTF-8. A base path por padrão é `http://127.0.0.1:8080/`.
 
 ---
 
 ## 1. Módulo Health
 
 ### `GET /health`
-Usado para verificação de liveness e status simples da API.
-**Respostas Esperadas:**
-- `200 OK`: `{"status": "ok", "app": "notebooklm-api", "version": "..."}`
+Verifica a saúde e estado de inicialização.
+- **Exemplos:** [curl](../use-http-curl/01-health.md) | [python](../use-python/01-health.py)
+- **Resposta (`200 OK`)**:
+  ```json
+  {"status": "ok", "app": "notebooklm-api", "version": "..."}
+  ```
 
 ---
 
 ## 2. Módulo Autenticação (`/auth`)
 
-O módulo de autenticação salva, lê e verifica os cookies Playwright (`storage_state.json`) necessários para se disfarçar e operar requisições HTTP internas no NotebookLM do Google.
+- **Exemplos Essenciais:** 
+  - Status: [curl](../use-http-curl/02-auth-status.md)
+  - Injetar Cookies: [curl](../use-http-curl/03-auth-storage-state.md)
+  - Fluxo Interativo: [curl](../use-http-curl/04-auth-login-start.md) | [python](../use-python/02-auth.py)
 
-### `GET /auth/status`
-Verifica se existe um estado de autenticação guardado no disco.
-**Respostas Esperadas:**
-- `200 OK`: 
+### Modelos de Dados - Auth
+
+#### `StorageCookie`
 ```json
 {
-  "storage_state_present": true,
-  "notebooklm_access_ok": true,
-  "detail": null
+  "name": "SID",          // string, required
+  "value": "...",         // string, required
+  "domain": ".google.com",// string, required
+  "path": "/",            // string, default "/"
+  "expires": 174000000,   // number | null (aceita 'expirationDate' e normaliza)
+  "httpOnly": true,       // boolean | null
+  "secure": true,         // boolean | null
+  "sameSite": "Lax"       // enum: "Lax", "None", "Strict" | null
 }
 ```
 
-### `POST /auth/storage-state`
-Escreve o Cookie de forma limpa convertendo a lista para o formato em disco do arquivo de state.
-**Payload:**
+#### `StorageStatePayload`
 ```json
 {
-  "cookies": [
-    {
-      "name": "SID",
-      "value": "...",
-      "domain": ".google.com",
-      "path": "/",
-      "httpOnly": true,
-      "secure": true,
-      "sameSite": "Lax"
-    }
-  ],
-  "origins": []
+  "cookies": [ /* array de StorageCookie */ ],
+  "origins": [ /* array de dicionários extras */ ]
 }
 ```
 
-### `POST /auth/login/start`
-Inicia um fluxo assistido de login Playwright interativo, onde um usuário pode escanear o QR/inserir Senha. Isso emite um evento.
+#### `StorageStateSaveResponse` / `AuthStatusResponse`
+Retornados por `POST /auth/storage-state` e `GET /auth/status`. Exibem a validade da conta.
+Campos principais: `storage_state_present` (bool), `notebooklm_access_ok` (bool).
 
-### `POST /auth/login/complete`
-Finaliza o fluxo assistido caso bem sucedido e escreve o `storage_state.json`.
+#### `LoginStartResponse` / `LoginCompleteRequest`
+- **Start** retorna: `{"session_id": "str", "expires_at": "datetime"}`
+- **Complete** recebe: `{"session_id": "str", "storage_state": StorageStatePayload}`
 
 ---
 
 ## 3. Módulo Notebooks (`/notebooks`)
 
-Lida com os Notebooks e com o catálogo local em banco de dados SQLite. Notebooks podem ser chamados tanto via ID próprio do Google (`notebook_id`) como por atalho de chave primária relacional (`local_id`).
+- **Exemplos Essenciais:** 
+  - CRUD & Sync: [curl](../use-http-curl/10-notebooks.md) | [python](../use-python/03-notebooks.py)
 
-### `GET /notebooks`
-Lista os notebooks salvos no Catálogo SQLite (`data/notebooks.db`).
+### Modelos de Dados - Notebooks
 
-### `POST /notebooks`
-Cria de forma assíncrona o Notebook remoto e salva localmente.
-**Payload:**
+#### `NotebookTargetMixin` / Identificação Híbrida
+Quase todas as operações de mutação requerem apontar um caderno. A API exige *ou* o UUID da nuvem ou o Auto-incremento SQLite:
+```json
+// Opção A
+{ "notebook_id": "4b6c23f2-a05b-..." }
+// Opção B
+{ "local_id": 14 }
+```
+
+#### `NotebookCreateRequest`
+```json
+{ "title": "Anotações 2024" } // string min_length: 1, max_length: 200
+```
+
+#### `PersistedNotebook` (O modelo retornado em listagens)
 ```json
 {
-  "title": "Novo Caderno de Física"
+  "local_id": 1,
+  "notebook_id": "google-uuid-xyz",
+  "title": "Anotações 2024",
+  "source_count": 0,
+  "artifact_count": 0,
+  "origin": "API",
+  "metadata": {},
+  "created_at": "2026-04-18T10:00:00Z",
+  "updated_at": "2026-04-18T10:00:00Z"
 }
 ```
 
-### `POST /notebooks/sync`
-Bate na API Oficial do Google e faz a importação (`upsert`) dos notebooks da conta para a base SQLite local, removendo o que for orfão. Retorna `imported` e `deleted` count. Ele invoca internamente o `JobService.sync_notebook_artifacts()` para que artefatos anteriores já gerados no passado e perdidos se transformem em `JobRecords` completos.
-
-### `GET /notebooks/{notebook_id}`
-Atualiza o Notebook específico pegando os dados atuais e reescrevendo `source_count`.
-
-### `DELETE /notebooks/{notebook_id}`
-### `DELETE /notebooks/local/{local_id}`
-Remove o Notebook remoto da conta e posteriormente limpa localmente da base SQLite caso bem sucedido.
+### Endpoints 
+- `POST /notebooks` -> Retorna `NotebookResponse`
+- `GET /notebooks` -> Retorna `NotebookListResponse` (`count` e `items`)
+- `POST /notebooks/sync` -> Retorna `NotebookSyncResponse`
+- `GET /notebooks/{notebook_id}`
+- `DELETE /notebooks/{notebook_id}`
+- `DELETE /notebooks/local/{local_id}`
 
 ---
 
 ## 4. Módulo Sources (`/sources`)
 
-Envio de dados textuais crus para dentro do modelo para embasar o "caderno".
+- **Exemplos Essenciais:** [curl](../use-http-curl/20-sources.md) | [python](../use-python/04-sources.py)
 
-### `POST /sources/text`
-Envia um texto cru em formato síncrono ou assíncrono.
-**Payload:**
+### Modelos de Dados - Sources
+
+#### `TextSourceInput`
 ```json
 {
-  "notebook_id": "<id_uuid>",
-  "title": "Resumo Cap 1",
-  "content": "A termodinâmica..."
+  "title": "Resumo Cap 1",       // max 200 chars
+  "content": "A termodinâmica..." // max 120.000 chars
 }
 ```
 
-### `POST /sources/batch`
-Envia múltiplos textos formatados. Cuidado com o Request Limit nativo do servidor/FastAPI para não gerar `HTTP 413 Payload Too Large`.
+#### `AddBatchTextSourcesRequest`
+```json
+{
+  "notebook_id": "xxxx",
+  "sources": [ /* Array de até 100 TextSourceInput */ ]
+}
+```
 
 ---
 
 ## 5. Módulo Operations (`/operations`)
 
-Local principal para gerar Mídias usando a inteligência multimodal do Gemini inserida no NotebookLM.
-Sempre informe `async=true` (Retorna 202 com Job Id) ou `async=false` (Trava requisição até o byte array do vídeo/áudio ser transferido nativamente na resposta HTTP).
+- **Exemplos Essenciais:** 
+  - Áudio: [curl](../use-http-curl/40-operations-audio.md) | [python](../use-python/06-operations-audio.py)
+  - Vídeo: [curl](../use-http-curl/41-operations-video.md) | [python](../use-python/07-operations-video.py)
 
-### `POST /operations/audio-summary?async=true`
-Pede que o painel multímodo de locutores discuta as fontes enviadas no Notebook.
-**Payload (Modelo `GenerateAudioSummaryJobRequest`):**
+### Enums de Operação
+- **`AudioSummaryMode`**: `"summary"` (Padrão), `"detailed_analysis"`, `"critical_review"`, `"debate"`.
+- **`AudioSummaryDuration`**: `"standard"` (Padrão), `"short"`.
+- **`VideoSummaryMode`**: `"explanatory_video"`.
+- **`VideoSummaryStyle`**: `"summary"`.
+
+### Endpoints
+*Nota: Aceitam Query Parameter opcional `?async=true` (Retorna 202 com Job ID) ou `?async=false` (Trava a requisição e retorna o Binário no final).*
+
+#### `POST /operations/audio-summary`
+**Payload (`AudioSummaryOperationRequest`):**
 ```json
 {
-  "notebook_id": "<id_uuid>",
-  "mode": "debate", 
-  "language": "pt-BR",
-  "duration": "standard", 
-  "focus_prompt": "Fale apenas sobre as equações de maxwell"
+  "notebook_id": "xxx", // ou local_id
+  "mode": "summary",
+  "language": "pt-BR", // max 20 chars
+  "duration": "standard",
+  "focus_prompt": "Fale apenas sobre as equações", // max 2.000 chars
+  "name": "Nome Customizado do Job" // opcional
 }
 ```
-**Campos do Enum:**
-- `mode`: `summary`, `debate`, `detailed_analysis`, `critical_review`
-- `duration`: `short`, `standard` 
 
-### `POST /operations/video-summary?async=true`
-Gerador nativo experimental (se disponível para sua conta Google) para clipes rápidos ou lousas virtuais explicando algo.
-**Payload (Modelo `GenerateVideoSummaryJobRequest`):**
+#### `POST /operations/video-summary`
+**Payload (`VideoSummaryOperationRequest`):**
 ```json
 {
-  "notebook_id": "<id_uuid>",
+  "notebook_id": "xxx",
   "mode": "explanatory_video",
   "style": "summary",
+  "language": "pt-BR",
   "visual_style": "auto",
-  "language": "pt-BR"
+  "focus_prompt": "Foque no personagem principal",
+  "name": "Nome Customizado"
 }
 ```
 
@@ -147,50 +180,55 @@ Gerador nativo experimental (se disponível para sua conta Google) para clipes r
 
 ## 6. Módulo Jobs (`/jobs`)
 
-Visualização e observabilidade das instâncias em execução background pelo sistema (criadas via Operations).
+- **Exemplos Essenciais:** [curl](../use-http-curl/30-jobs.md) | [python](../use-python/05-jobs.py)
 
-### `GET /jobs`
-Lista todos os `JobRecords` contidos na pasta de persistência. Permite query params (ex: `?job_id=xxx&name=xxx`).
+### Modelos de Dados - Jobs
 
-### `GET /jobs/{job_id}`
-Mostra o status nativo. 
-**Esquema `JobRecord`:**
+#### `JobStatus` (Lifecycle Tracking)
+`"queued"` -> `"running"` -> `"waiting_remote"` -> `"completed"` (ou `"failed"`, `"timed_out"`).
+
+#### `JobRecord` (A Entidade JSON de acompanhamento)
 ```json
 {
   "id": "e30e1f7c-7a6c-...",
+  "name": "Meu Job",
   "type": "generate_audio_summary",
   "status": "completed",
-  "notebook_id": "xxxxx-xxxx-xxxx",
-  "started_at": "2026-04-18T10:00:00Z",
-  "completed_at": "2026-04-18T10:04:12Z",
+  "input": { /* O Payload da request enviada */ },
+  "result": { "artifact_reference": "reference_uuid", "media_type": "audio/wav" },
   "error": null,
-  "artifact_path": "Meu_Novo_Documento.wav",
-  "artifact_metadata": { "title": "Meu_Novo_Documento" },
+  "created_at": "...",
+  "started_at": "...",
+  "completed_at": "...",
+  "duration_ms": 14000,
+  "notebook_id": "xxxx-xxxx-xxxx",
+  "artifact_path": "data/artifacts/Resumo_Fisica.wav",
+  "artifact_metadata": { 
+     "file_name": "Resumo_Fisica.wav", 
+     "content_type": "audio/wav", 
+     "size_bytes": 10240, 
+     "sha256": "..." 
+  },
   "logs": [
-    { "at": "2026-04-18T10:00:01Z", "stage": "gerar_audio", "message": "Enviando comando..." },
-    { "at": "2026-04-18T10:00:04Z", "stage": "waiting_remote", "message": "status remoto: RUNNING" }
-  ],
-  "result": { "artifact_reference": "reference_uuid", "media_type": "audio/wav" }
+    { "at": "...", "stage": "gerar_audio", "message": "Enviando comando..." }
+  ]
 }
 ```
 
-### Status do Enum `JobStatus`:
-- `queued`: Não captado na memória da Thread
-- `running`: Request inicial lançado
-- `waiting_remote`: Backend comunicando, esperando artefato chegar 
-- `completed`: Tudo certo
-- `failed`: Exception interna na fila
-- `timed_out`: Não processado por limite de timeout.
+### Endpoints
+- `GET /jobs` -> Retorna lista filtrada via Query Params (`?job_id=`, `?name=`).
+- `GET /jobs/{job_id}` -> Retorna o Status individual acima.
 
 ---
 
 ## 7. Módulo Artifacts (`/artifacts`)
 
-Entrega de arquivos finalizados pelo Worker de Jobs.
+- **Exemplos Essenciais:** [curl](../use-http-curl/50-artifacts.md) | [python](../use-python/08-artifacts.py)
 
 ### `GET /artifacts/{job_id}`
-Realiza o fetch do arquivo estático nativo convertido. Baseado nos metadados salvos pelo job concluído.
+Realiza o fetch do arquivo estático nativo convertido (`.wav` ou `.mp4`).
 
-**Status de Falha:**
-- `404 Not Found`: Arquivo do Job ID não existe ou Job Request não existe.
-- `409 Conflict`: O Job existe, mas ainda não se encontra em status finalizado para retornar nenhum binário.
+**Status de Resposta Padrão:**
+- `200 OK`: Binário anexado como `Content-Disposition: attachment`.
+- `404 Not Found`: Arquivo do Job ID não existe fisicamente no Host ou Job UUID é inválido.
+- `409 Conflict`: O Job existe no sistema, mas ainda está processando e não alcançou o status finalizado `completed`. Em requisições de Polling assíncrono, lide com 409 pausando a Thread de execução e retentando o download mais tarde.

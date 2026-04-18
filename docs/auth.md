@@ -1,5 +1,7 @@
 # Autenticação e Autorização com NotebookLM
 
+> 💡 **Exemplos Práticos Disponíveis:** Para ver os payloads de Login Assistido e Storage State, veja os exemplos práticos em [curl](../use-http-curl/) e [Python](../use-python/).
+
 A API usa a biblioteca [`notebooklm-py`](https://github.com/nclv/notebooklm-py) que interage não-oficialmente com as páginas do Google. Por este motivo, não existem "Tokens de API". Todo o funcionamento real baseia-se na emulação de cookies capturados de um navegador através do formato padrão do **Playwright** (`storage_state.json`).
 
 ---

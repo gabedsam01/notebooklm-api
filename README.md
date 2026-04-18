@@ -126,6 +126,19 @@ A API e suas especificidades superam a capacidade deste README. O projeto conté
 
 ---
 
+## 🛠️ Exemplos Práticos Prontos para Uso
+
+A documentação conceitual acima é suportada por duas bibliotecas vastas de exemplos "Copiar e Colar". 
+Nós eliminamos a necessidade de adivinhação: absolutamente todos os endpoints e fluxos reais da API estão documentados em formato acionável nas pastas abaixo.
+
+### ➡️ [`use-http-curl/`](use-http-curl/)
+Coleção de arquivos com exemplos prontos em `curl` cobrindo o ciclo de vida inteiro (Saúde da API, Login, Auth State, Criação de Notebooks, Lotes de Fontes, e Geração de Áudio/Vídeo e Tracking). Perfeito para inspecionar no terminal.
+
+### ➡️ [`use-python/`](use-python/)
+Scripts executáveis diretos em Python utilizando a biblioteca padrão `requests`. Útil para desenvolvedores que desejam automatizar pipelines e compreender fluxos de ponta a ponta na linguagem nativa.
+
+---
+
 ## ⚠️ Limitações Conhecidas
 
 - **Suporte Oficial**: O Google não possui uma API Rest pública para o NotebookLM. Esta aplicação provê e mapeia uma interface em cima do `notebooklm-py` através de extração de chamadas Playwright/cookies. É instável por natureza. Use cookies atualizados (`SID`, `HSID`, `SSID`, etc.).

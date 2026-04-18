@@ -1,5 +1,7 @@
 # Jobs Assíncronos & Fila de Processamento
 
+> 💡 **Exemplos Práticos Disponíveis:** Veja como implementar um Polling eficiente aguardando o Status final e efetuar Downloads em [curl](../use-http-curl/) e [Python](../use-python/).
+
 Dado que a geração de resumos em Inteligência Artificial requer frequentemente de 3 a 10 minutos no serviço do Google, o `notebooklm-api` possui uma camada nativa de gerenciamento de background baseada na classe interna `JobService`.
 
 Todo o fluxo que passa um `async=true` retornará um Código **HTTP 202** instanciando um Tracking ID persistente (O identificador do Job).

@@ -250,7 +250,16 @@ class NotebookLMPyService:
 
     def __init__(self, storage_state_service: StorageStateService) -> None:
         self._storage_state_service = storage_state_service
-        self._client: Any = None
+
+    async def _get_client(self) -> "NotebookLMClient":
+        from notebooklm import NotebookLMClient
+        if not self._storage_state_service.exists():
+            raise NotebookLMOperationError("Storage state ausente. Salve cookies em /auth/storage-state.")
+        
+        try:
+            return await NotebookLMClient.from_storage(str(self._storage_state_service.storage_state_path))
+        except Exception as exc:
+            raise NotebookLMOperationError(f"Falha ao inicializar cliente: {sanitize_exception(exc)}") from exc
 
     async def verify_access(self) -> NotebookAccessCheck:
         if not self._storage_state_service.exists():
@@ -260,10 +269,8 @@ class NotebookLMPyService:
             )
 
         try:
-            await self._invoke(
-                method_names=("list_notebooks", "get_notebooks", "list"),
-                call_variants=(((), {}),),
-            )
+            async with await self._get_client() as client:
+                await client.notebooks.list()
             return NotebookAccessCheck(ok=True, detail="Sessao NotebookLM validada.")
         except Exception as exc:  # noqa: BLE001
             return NotebookAccessCheck(
@@ -275,83 +282,52 @@ class NotebookLMPyService:
             )
 
     async def list_notebooks(self) -> list[dict[str, Any]]:
-        result = await self._invoke(
-            method_names=("list_notebooks", "get_notebooks", "list"),
-            call_variants=(((), {}),),
-        )
-        if result is None:
-            return []
-        if isinstance(result, list):
-            parsed: list[dict[str, Any]] = []
-            for item in result:
-                if isinstance(item, dict):
-                    parsed.append(item)
-                else:
-                    parsed.append(
-                        {
-                            "id": _extract_identifier(item, keys=("id", "notebook_id", "notebookId")),
-                            "title": getattr(item, "title", "Notebook"),
-                            "source_count": int(getattr(item, "source_count", 0)),
-                        }
-                    )
-            return parsed
-        return []
+        async with await self._get_client() as client:
+            notebooks = await client.notebooks.list()
+            return [
+                {
+                    "id": nb.id,
+                    "title": nb.title,
+                    "source_count": nb.sources_count,
+                }
+                for nb in notebooks
+            ]
 
     async def create_notebook(self, title: str) -> str:
-        result = await self._invoke(
-            method_names=("create_notebook", "createNotebook", "notebook_create"),
-            call_variants=(
-                ((title,), {}),
-                ((), {"title": title}),
-            ),
-        )
-        notebook_id = _extract_identifier(result, keys=("id", "notebook_id", "notebookId"))
-        if not notebook_id:
-            raise NotebookLMOperationError("Nao foi possivel obter notebook_id")
-        return notebook_id
+        async with await self._get_client() as client:
+            notebook = await client.notebooks.create(title)
+            return notebook.id
 
     async def get_notebook(self, notebook_id: str) -> dict[str, Any] | None:
-        result = await self._invoke(
-            method_names=("get_notebook", "getNotebook", "notebook_get"),
-            call_variants=(
-                ((), {"notebook_id": notebook_id}),
-                ((notebook_id,), {}),
-            ),
-        )
-        if result is None:
-            return None
-        if isinstance(result, dict):
-            return result
-        return {
-            "id": _extract_identifier(result, keys=("id", "notebook_id", "notebookId")) or notebook_id,
-            "title": getattr(result, "title", "Notebook"),
-            "source_count": int(getattr(result, "source_count", 0)),
-        }
+        try:
+            from notebooklm.exceptions import NotebookNotFoundError
+        except ImportError:
+            NotebookNotFoundError = Exception
+
+        async with await self._get_client() as client:
+            try:
+                notebook = await client.notebooks.get(notebook_id)
+                return {
+                    "id": notebook.id,
+                    "title": notebook.title,
+                    "source_count": notebook.sources_count,
+                }
+            except NotebookNotFoundError:
+                return None
+            except Exception as e:
+                # If the exception is 'not found' by string
+                if "not found" in str(e).lower() or "404" in str(e):
+                    return None
+                raise
 
     async def delete_notebook(self, notebook_id: str) -> None:
-        await self._invoke(
-            method_names=("delete_notebook", "deleteNotebook", "remove_notebook"),
-            call_variants=(
-                ((), {"notebook_id": notebook_id}),
-                ((notebook_id,), {}),
-            ),
-        )
+        async with await self._get_client() as client:
+            await client.notebooks.delete(notebook_id)
 
     async def add_text_source(self, notebook_id: str, title: str, content: str) -> str | None:
-        result = await self._invoke(
-            method_names=(
-                "add_text_source",
-                "add_source_from_text",
-                "upload_text_source",
-                "addTextSource",
-            ),
-            call_variants=(
-                ((), {"notebook_id": notebook_id, "title": title, "content": content}),
-                ((), {"notebook_id": notebook_id, "source_title": title, "text": content}),
-                ((notebook_id, title, content), {}),
-            ),
-        )
-        return _extract_identifier(result, keys=("id", "source_id", "sourceId"))
+        async with await self._get_client() as client:
+            source = await client.sources.add_text(notebook_id, title=title, content=content)
+            return source.id
 
     async def add_text_sources_batch(
         self,
@@ -359,10 +335,10 @@ class NotebookLMPyService:
         sources: list[dict[str, str]],
     ) -> list[str]:
         source_ids: list[str] = []
-        for source in sources:
-            source_id = await self.add_text_source(notebook_id, source["title"], source["content"])
-            if source_id:
-                source_ids.append(source_id)
+        async with await self._get_client() as client:
+            for source in sources:
+                src = await client.sources.add_text(notebook_id, title=source["title"], content=source["content"])
+                source_ids.append(src.id)
         return source_ids
 
     async def generate_audio_summary(
@@ -373,34 +349,14 @@ class NotebookLMPyService:
         duration: str,
         focus_prompt: str,
     ) -> str:
-        result = await self._invoke(
-            method_names=(
-                "generate_audio_summary",
-                "generate_audio",
-                "generate_podcast",
-                "create_audio_overview",
-            ),
-            call_variants=(
-                (
-                    (),
-                    {
-                        "notebook_id": notebook_id,
-                        "mode": mode,
-                        "language": language,
-                        "duration": duration,
-                        "focus_prompt": focus_prompt,
-                    },
-                ),
-                ((notebook_id, focus_prompt), {}),
-            ),
-        )
-        artifact_id = _extract_identifier(
-            result,
-            keys=("id", "artifact_id", "audio_id", "job_id", "task_id"),
-        )
-        if not artifact_id:
-            raise NotebookLMOperationError("Nao foi possivel obter referencia do artefato de audio")
-        return artifact_id
+        async with await self._get_client() as client:
+            # We can map parameters, but for now we just pass language and instructions
+            status = await client.artifacts.generate_audio(
+                notebook_id=notebook_id,
+                language=language,
+                instructions=focus_prompt if focus_prompt else None,
+            )
+            return status.task_id
 
     async def generate_video_summary(
         self,
@@ -411,34 +367,13 @@ class NotebookLMPyService:
         visual_style: str | None,
         focus_prompt: str,
     ) -> str:
-        result = await self._invoke(
-            method_names=(
-                "generate_video_summary",
-                "generate_video",
-                "create_video_overview",
-            ),
-            call_variants=(
-                (
-                    (),
-                    {
-                        "notebook_id": notebook_id,
-                        "mode": mode,
-                        "style": style,
-                        "language": language,
-                        "visual_style": visual_style,
-                        "focus_prompt": focus_prompt,
-                    },
-                ),
-                ((notebook_id, focus_prompt), {}),
-            ),
-        )
-        artifact_id = _extract_identifier(
-            result,
-            keys=("id", "artifact_id", "video_id", "job_id", "task_id"),
-        )
-        if not artifact_id:
-            raise NotebookLMOperationError("Nao foi possivel obter referencia do artefato de video")
-        return artifact_id
+        async with await self._get_client() as client:
+            status = await client.artifacts.generate_video(
+                notebook_id=notebook_id,
+                language=language,
+                instructions=focus_prompt if focus_prompt else None,
+            )
+            return status.task_id
 
     async def wait_for_artifact(
         self,
@@ -447,34 +382,17 @@ class NotebookLMPyService:
         timeout_seconds: int,
         poll_interval_seconds: float,
     ) -> str:
-        try:
-            result = await self._invoke(
-                method_names=(
-                    "wait_for_artifact",
-                    "wait_for_audio",
-                    "wait_for_video",
-                    "wait_for_generation",
-                ),
-                call_variants=(
-                    (
-                        (),
-                        {
-                            "notebook_id": notebook_id,
-                            "artifact_id": artifact_reference,
-                            "timeout": timeout_seconds,
-                            "poll_interval": poll_interval_seconds,
-                        },
-                    ),
-                    ((notebook_id, artifact_reference), {}),
-                ),
+        async with await self._get_client() as client:
+            # Task ID is our artifact reference for Audio/Video
+            status = await client.artifacts.wait_for_completion(
+                notebook_id=notebook_id,
+                task_id=artifact_reference,
+                timeout=float(timeout_seconds),
+                initial_interval=poll_interval_seconds,
             )
-            resolved = _extract_identifier(
-                result,
-                keys=("id", "artifact_id", "audio_id", "video_id", "job_id", "task_id"),
-            )
-            return resolved or artifact_reference
-        except NotebookLMOperationError:
-            return artifact_reference
+            # The downloaded audio/video uses task_id (or status.task_id) implicitly if artifact_id is None,
+            # but wait_for_completion returns a status where task_id is usually the artifact_id for completed audio.
+            return status.task_id or artifact_reference
 
     async def download_artifact(
         self,
@@ -482,128 +400,33 @@ class NotebookLMPyService:
         artifact_reference: str,
         destination_path: Path,
     ) -> Path:
-        destination_path.parent.mkdir(parents=True, exist_ok=True)
-        result = await self._invoke(
-            method_names=(
-                "download_artifact",
-                "download_audio",
-                "download_video",
-                "download",
-            ),
-            call_variants=(
-                (
-                    (),
-                    {
-                        "notebook_id": notebook_id,
-                        "artifact_id": artifact_reference,
-                        "destination": str(destination_path),
-                    },
-                ),
-                ((notebook_id, artifact_reference, str(destination_path)), {}),
-                ((notebook_id, artifact_reference), {}),
-            ),
-        )
-
-        if isinstance(result, bytes):
-            destination_path.write_bytes(result)
-            return destination_path
-
-        if isinstance(result, str | Path):
-            result_path = Path(result)
-            if result_path.exists():
-                if result_path.resolve() != destination_path.resolve():
-                    shutil.copyfile(result_path, destination_path)
+        async with await self._get_client() as client:
+            destination_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Since we generated audio/video and have a task_id/artifact_id
+            # Try to guess which one it is or use general download if available
+            # Let's try audio first, if it fails, try video. Or just call poll_status to see what it is
+            
+            try:
+                # If artifact_reference looks like a task_id for an audio, we can try downloading audio.
+                # Actually, notebooklm-py 0.3 download_audio just gets the latest completed if artifact_id is None.
+                # If we pass artifact_id=artifact_reference, it filters. Let's try downloading audio first.
+                await client.artifacts.download_audio(
+                    notebook_id=notebook_id, 
+                    output_path=str(destination_path),
+                    artifact_id=artifact_reference
+                )
                 return destination_path
-
-        if destination_path.exists():
-            return destination_path
-
-        raise NotebookLMOperationError("NotebookLM nao retornou arquivo para download")
-
-    def _get_client(self) -> Any:
-        if self._client is not None:
-            return self._client
-
-        if not self._storage_state_service.exists():
-            raise NotebookLMOperationError("storage_state nao encontrado")
-
-        module = None
-        for module_name in ("notebooklm_py", "notebooklm"):
-            try:
-                module = importlib.import_module(module_name)
-                break
-            except ModuleNotFoundError:
-                continue
-
-        if module is None:
-            raise NotebookLMOperationError(
-                "Biblioteca notebooklm-py nao encontrada. Configure NOTEBOOKLM_MODE=mock ou instale a lib."
-            )
-
-        client_class = None
-        for class_name in ("NotebookLMClient", "Client", "NotebookLM"):
-            candidate = getattr(module, class_name, None)
-            if candidate is not None:
-                client_class = candidate
-                break
-
-        if client_class is None:
-            raise NotebookLMOperationError("Classe cliente do notebooklm-py nao encontrada")
-
-        storage_path = str(self._storage_state_service.storage_state_path)
-        init_variants = (
-            ((), {"storage_state_path": storage_path}),
-            ((), {"storage_state": storage_path}),
-            ((), {"cookies_path": storage_path}),
-            ((storage_path,), {}),
-            ((), {}),
-        )
-
-        last_error: Exception | None = None
-        for args, kwargs in init_variants:
-            try:
-                instance = client_class(*args, **kwargs)
-                self._client = instance
-                return instance
-            except TypeError as exc:
-                last_error = exc
-                continue
-            except Exception as exc:  # noqa: BLE001
-                raise NotebookLMOperationError("Falha ao inicializar cliente notebooklm-py") from exc
-
-        raise NotebookLMOperationError("Nao foi possivel inicializar notebooklm-py") from last_error
-
-    async def _invoke(
-        self,
-        method_names: Sequence[str],
-        call_variants: Sequence[tuple[tuple[Any, ...], dict[str, Any]]],
-    ) -> Any:
-        client = self._get_client()
-
-        for method_name in method_names:
-            method = getattr(client, method_name, None)
-            if not callable(method):
-                continue
-
-            last_type_error: TypeError | None = None
-            for args, kwargs in call_variants:
+            except Exception as e_audio:
                 try:
-                    result = method(*args, **kwargs)
-                    if inspect.isawaitable(result):
-                        return await result
-                    return result
-                except TypeError as exc:
-                    last_type_error = exc
-                    continue
-
-            if last_type_error is not None:
-                raise NotebookLMOperationError(
-                    f"Metodo '{method_name}' nao aceitou assinatura esperada"
-                ) from last_type_error
-
-        raise NotebookLMOperationError(
-            f"Metodo notebooklm-py nao encontrado. Esperado: {', '.join(method_names)}"
-        )
+                    await client.artifacts.download_video(
+                        notebook_id=notebook_id, 
+                        output_path=str(destination_path),
+                        artifact_id=artifact_reference
+                    )
+                    return destination_path
+                except Exception as e_video:
+                    raise NotebookLMOperationError(f"Falha ao baixar artefato: Audio({e_audio}), Video({e_video})")
 
 
 def build_notebook_service(

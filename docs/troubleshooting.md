@@ -90,16 +90,15 @@ curl -s http://127.0.0.1:8080/auth/status
 
 3. conferir se `NOTEBOOKLM_MODE` esta correto para o contexto
 
-## 5) Modo real falha por dependencia nao oficial
+## 5) Modo real falha por problema de sessao
 
 ### Sintoma
 
-- erro relacionado a `notebooklm-py` nao encontrada
+- erro relacionado a sessao NotebookLM expirada
 
 ### Como resolver
 
-- para desenvolvimento: usar `notebooklmapi start --dev`
-- para modo real: instalar e validar biblioteca de integracao no ambiente
+- reenviar cookies atualizados extraidos do navegador usando o endpoint `/auth/storage-state`
 
 ## 6) Operacao async sem artefato ainda disponivel
 

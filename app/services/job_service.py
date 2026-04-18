@@ -139,10 +139,11 @@ class JobService:
             poll_interval_seconds=poll_interval,
         )
         destination = self._artifact_service.build_path(request_id, ".wav")
-        saved = await self._notebook_service.download_artifact(
+        saved = await self._download_with_retry(
             notebook_id=notebook_id,
             artifact_reference=final_reference,
             destination_path=destination,
+            media_type="audio",
         )
         metadata = self._artifact_service.build_metadata(saved, content_type="audio/wav")
         self._notebook_catalog.increment_artifact_count(notebook_id)
@@ -180,14 +181,58 @@ class JobService:
             poll_interval_seconds=poll_interval,
         )
         destination = self._artifact_service.build_path(request_id, ".mp4")
-        saved = await self._notebook_service.download_artifact(
+        saved = await self._download_with_retry(
             notebook_id=notebook_id,
             artifact_reference=final_reference,
             destination_path=destination,
+            media_type="video",
         )
         metadata = self._artifact_service.build_metadata(saved, content_type="video/mp4")
         self._notebook_catalog.increment_artifact_count(notebook_id)
         return saved, metadata, {"artifact_reference": final_reference}
+
+    async def _download_with_retry(
+        self,
+        notebook_id: str,
+        artifact_reference: str,
+        destination_path: Path,
+        media_type: str,
+        max_attempts: int = 3,
+        base_delay: float = 2.0,
+    ) -> Path:
+        """Download com retry e backoff exponencial.
+
+        Trata ``ArtifactNotReadyError`` e erros transientes de rede
+        com backoff ``2s → 4s → 8s`` entre tentativas.
+
+        Isso cobre a race condition onde ``poll_status`` retorna
+        ``completed`` mas as URLs de mídia ainda não estão populadas.
+        """
+        last_exc: Exception | None = None
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return await self._notebook_service.download_artifact(
+                    notebook_id=notebook_id,
+                    artifact_reference=artifact_reference,
+                    destination_path=destination_path,
+                    media_type=media_type,
+                )
+            except Exception as exc:
+                last_exc = exc
+                if attempt < max_attempts:
+                    delay = base_delay * (2 ** (attempt - 1))  # 2s, 4s, 8s
+                    logger.warning(
+                        "Download attempt %d/%d failed (%s): %s. Retrying in %.1fs...",
+                        attempt,
+                        max_attempts,
+                        media_type,
+                        sanitize_exception(exc),
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
+
+        raise last_exc  # type: ignore[misc]
 
     def _prepare_payload(self, payload: JobRequest) -> JobRequest:
         if isinstance(payload, CreateNotebookJobRequest):
@@ -348,10 +393,11 @@ class JobService:
 
         self._append_log(job, stage="download_audio", message="baixando artefato de audio...")
         artifact_path = self._artifact_service.build_path(job.id, ".wav")
-        downloaded_path = await self._notebook_service.download_artifact(
+        downloaded_path = await self._download_with_retry(
             notebook_id=notebook_id,
             artifact_reference=final_reference,
             destination_path=artifact_path,
+            media_type="audio",
         )
         metadata = self._artifact_service.build_metadata(downloaded_path, content_type="audio/wav")
         self._notebook_catalog.increment_artifact_count(notebook_id)
@@ -411,10 +457,11 @@ class JobService:
 
         self._append_log(job, stage="download_video", message="baixando artefato de video...")
         artifact_path = self._artifact_service.build_path(job.id, ".mp4")
-        downloaded_path = await self._notebook_service.download_artifact(
+        downloaded_path = await self._download_with_retry(
             notebook_id=notebook_id,
             artifact_reference=final_reference,
             destination_path=artifact_path,
+            media_type="video",
         )
         metadata = self._artifact_service.build_metadata(downloaded_path, content_type="video/mp4")
         self._notebook_catalog.increment_artifact_count(notebook_id)

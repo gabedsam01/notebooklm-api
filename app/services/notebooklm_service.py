@@ -89,6 +89,7 @@ class NotebookLMService(Protocol):
         notebook_id: str,
         artifact_reference: str,
         destination_path: Path,
+        media_type: str = "audio",
     ) -> Path:
         ...
 
@@ -249,7 +250,9 @@ class MockNotebookLMService:
         notebook_id: str,
         artifact_reference: str,
         destination_path: Path,
+        media_type: str = "audio",
     ) -> Path:
+        _ = media_type
         artifact = self._artifacts.get(artifact_reference)
         if artifact is None:
             raise NotebookLMOperationError("Artefato nao encontrado para download")
@@ -443,37 +446,46 @@ class NotebookLMPyService:
         notebook_id: str,
         artifact_reference: str,
         destination_path: Path,
+        media_type: str = "audio",
     ) -> Path:
+        """Download de artefato tipado (audio ou video).
+
+        O caller (JobService) informa o ``media_type`` para que a chamada
+        vá direto ao método correto da lib, evitando tentativas
+        sequenciais cegas.
+        """
         async with await self._get_client() as client:
             destination_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Since we generated audio/video and have a task_id/artifact_id
-            # Try to guess which one it is or use general download if available
-            # Let's try audio first, if it fails, try video. Or just call poll_status to see what it is
-            
+
             try:
-                await client.artifacts.download_audio(
-                    notebook_id=notebook_id, 
-                    output_path=str(destination_path),
-                    artifact_id=artifact_reference
-                )
-            except Exception as e_audio:
-                try:
+                if media_type == "video":
                     await client.artifacts.download_video(
-                        notebook_id=notebook_id, 
+                        notebook_id=notebook_id,
                         output_path=str(destination_path),
-                        artifact_id=artifact_reference
+                        artifact_id=artifact_reference,
                     )
-                except Exception as e_video:
-                    raise NotebookLMOperationError(f"Falha ao baixar artefato: Audio({e_audio}), Video({e_video})")
+                else:
+                    await client.artifacts.download_audio(
+                        notebook_id=notebook_id,
+                        output_path=str(destination_path),
+                        artifact_id=artifact_reference,
+                    )
+            except Exception as exc:
+                raise NotebookLMOperationError(
+                    f"Falha ao baixar artefato ({media_type}): {sanitize_exception(exc)}"
+                ) from exc
 
             # Robustness check: Ensure file exists and is not empty
             if not destination_path.exists():
-                raise NotebookLMOperationError(f"Falha silenciosa: O arquivo do artefato nao foi criado em {destination_path}")
+                raise NotebookLMOperationError(
+                    f"Falha silenciosa: O arquivo do artefato nao foi criado em {destination_path}"
+                )
             if destination_path.stat().st_size == 0:
                 destination_path.unlink()
-                raise NotebookLMOperationError("Falha no download: O arquivo baixado tem tamanho 0 bytes.")
-            
+                raise NotebookLMOperationError(
+                    "Falha no download: O arquivo baixado tem tamanho 0 bytes."
+                )
+
             return destination_path
 
 

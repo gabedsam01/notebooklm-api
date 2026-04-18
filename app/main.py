@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -20,12 +22,15 @@ from app.services.source_builder_service import SourceBuilderService
 from app.services.storage_state_service import StorageStateService
 from app.web import routes as web_routes
 
+logger = logging.getLogger(__name__)
+
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved_settings = settings or get_settings()
     configure_logging(resolved_settings.log_level)
 
     _prepare_directories(resolved_settings)
+    _sync_notebooklm_home(resolved_settings)
 
     storage_state_service = StorageStateService(resolved_settings.storage_state_path)
     notebook_service = build_notebook_service(
@@ -95,6 +100,23 @@ def _prepare_directories(settings: Settings) -> None:
     settings.sqlite_db_path.parent.mkdir(parents=True, exist_ok=True)
     settings.templates_dir.mkdir(parents=True, exist_ok=True)
     settings.static_dir.mkdir(parents=True, exist_ok=True)
+
+
+def _sync_notebooklm_home(settings: Settings) -> None:
+    """Sincroniza NOTEBOOKLM_HOME com o diretório de auth do app.
+
+    A lib notebooklm-py usa ``load_httpx_cookies()`` sem argumento de path
+    durante downloads de artefatos (``download_audio``/``download_video``).
+    Internamente, essa função resolve o ``storage_state.json`` via
+    ``get_storage_path()`` → ``$NOTEBOOKLM_HOME/storage_state.json``.
+
+    Sem esta sincronização, o download tenta ler cookies de
+    ``~/.notebooklm/storage_state.json`` em vez de
+    ``data/auth/storage_state.json`` (onde o app efetivamente salva).
+    """
+    auth_dir = str(settings.storage_state_path.parent)
+    os.environ["NOTEBOOKLM_HOME"] = auth_dir
+    logger.info("NOTEBOOKLM_HOME sincronizado: %s", auth_dir)
 
 
 app = create_app()

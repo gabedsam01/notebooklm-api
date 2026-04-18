@@ -6,6 +6,7 @@ import inspect
 import io
 import math
 import shutil
+import time
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -80,8 +81,8 @@ class NotebookLMService(Protocol):
         artifact_reference: str,
         timeout_seconds: int,
         poll_interval_seconds: float,
-    ) -> str:
-        ...
+        status_callback: Any | None = None,
+    ) -> str: ...
 
     async def download_artifact(
         self,
@@ -219,13 +220,28 @@ class MockNotebookLMService:
         artifact_reference: str,
         timeout_seconds: int,
         poll_interval_seconds: float,
+        status_callback: Any | None = None,
     ) -> str:
         _ = notebook_id
         _ = timeout_seconds
         _ = poll_interval_seconds
         if artifact_reference not in self._artifacts:
             raise NotebookLMOperationError("Artefato nao encontrado")
+        
+        if status_callback:
+            if asyncio.iscoroutinefunction(status_callback):
+                await status_callback("in_progress")
+            else:
+                status_callback("in_progress")
+        
         await asyncio.sleep(0.05)
+        
+        if status_callback:
+            if asyncio.iscoroutinefunction(status_callback):
+                await status_callback("completed")
+            else:
+                status_callback("completed")
+
         return artifact_reference
 
     async def download_artifact(
@@ -381,18 +397,46 @@ class NotebookLMPyService:
         artifact_reference: str,
         timeout_seconds: int,
         poll_interval_seconds: float,
+        status_callback: Any | None = None,
     ) -> str:
         async with await self._get_client() as client:
-            # Task ID is our artifact reference for Audio/Video
-            status = await client.artifacts.wait_for_completion(
-                notebook_id=notebook_id,
-                task_id=artifact_reference,
-                timeout=float(timeout_seconds),
-                initial_interval=poll_interval_seconds,
-            )
-            # The downloaded audio/video uses task_id (or status.task_id) implicitly if artifact_id is None,
-            # but wait_for_completion returns a status where task_id is usually the artifact_id for completed audio.
-            return status.task_id or artifact_reference
+            start_time = time.monotonic()
+            last_status = None
+            consecutive_errors = 0
+            
+            while time.monotonic() - start_time < timeout_seconds:
+                try:
+                    status_obj = await client.artifacts.poll_status(
+                        notebook_id=notebook_id,
+                        task_id=artifact_reference,
+                    )
+                    consecutive_errors = 0
+                    current_status = getattr(status_obj, "status", "unknown")
+                    
+                    if current_status != last_status:
+                        if status_callback:
+                            if asyncio.iscoroutinefunction(status_callback):
+                                await status_callback(current_status)
+                            else:
+                                status_callback(current_status)
+                        last_status = current_status
+
+                    if current_status == "completed":
+                        return getattr(status_obj, "task_id", artifact_reference) or artifact_reference
+                    elif current_status == "failed":
+                        error_msg = getattr(status_obj, "error", "Erro desconhecido")
+                        raise NotebookLMOperationError(f"Geracao de artefato falhou remotamente: {error_msg}")
+                    # Continue waiting for "pending", "in_progress", "unknown"
+                except NotebookLMOperationError:
+                    raise
+                except Exception as e:
+                    consecutive_errors += 1
+                    if consecutive_errors > 5:
+                        raise NotebookLMOperationError(f"Muitos erros consecutivos ao consultar status do artefato: {sanitize_exception(e)}")
+                
+                await asyncio.sleep(poll_interval_seconds)
+            
+            raise TimeoutError(f"Timeout de {timeout_seconds}s excedido aguardando artefato no NotebookLM.")
 
     async def download_artifact(
         self,
@@ -408,15 +452,11 @@ class NotebookLMPyService:
             # Let's try audio first, if it fails, try video. Or just call poll_status to see what it is
             
             try:
-                # If artifact_reference looks like a task_id for an audio, we can try downloading audio.
-                # Actually, notebooklm-py 0.3 download_audio just gets the latest completed if artifact_id is None.
-                # If we pass artifact_id=artifact_reference, it filters. Let's try downloading audio first.
                 await client.artifacts.download_audio(
                     notebook_id=notebook_id, 
                     output_path=str(destination_path),
                     artifact_id=artifact_reference
                 )
-                return destination_path
             except Exception as e_audio:
                 try:
                     await client.artifacts.download_video(
@@ -424,9 +464,17 @@ class NotebookLMPyService:
                         output_path=str(destination_path),
                         artifact_id=artifact_reference
                     )
-                    return destination_path
                 except Exception as e_video:
                     raise NotebookLMOperationError(f"Falha ao baixar artefato: Audio({e_audio}), Video({e_video})")
+
+            # Robustness check: Ensure file exists and is not empty
+            if not destination_path.exists():
+                raise NotebookLMOperationError(f"Falha silenciosa: O arquivo do artefato nao foi criado em {destination_path}")
+            if destination_path.stat().st_size == 0:
+                destination_path.unlink()
+                raise NotebookLMOperationError("Falha no download: O arquivo baixado tem tamanho 0 bytes.")
+            
+            return destination_path
 
 
 def build_notebook_service(

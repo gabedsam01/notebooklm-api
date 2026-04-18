@@ -12,8 +12,10 @@ from app.models.sources import TextSourceInput
 class JobStatus(str, Enum):
     queued = "queued"
     running = "running"
+    waiting_remote = "waiting_remote"
     completed = "completed"
     failed = "failed"
+    timed_out = "timed_out"
 
 
 class JobType(str, Enum):

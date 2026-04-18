@@ -95,6 +95,13 @@ Variaveis principais:
 - `SQLITE_DB_PATH` (default `data/notebooks.db`)
 - `STORAGE_STATE_PATH` (default `data/auth/storage_state.json`)
 
+Timeouts (artefatos longos):
+
+- `ARTIFACT_WAIT_TIMEOUT_SECONDS` (default `1800` - 30 min)
+- `ARTIFACT_POLL_INTERVAL_SECONDS` (default `15.0`)
+- `AUDIO_WAIT_TIMEOUT_SECONDS` (opcional, sobrescreve `ARTIFACT_WAIT_TIMEOUT_SECONDS` para audio)
+- `VIDEO_WAIT_TIMEOUT_SECONDS` (opcional, sobrescreve `ARTIFACT_WAIT_TIMEOUT_SECONDS` para video)
+
 Observacao: `NOTEBOOKLM_STORAGE_STATE_PATH` e aceito como alias legado.
 
 ## Uso CLI

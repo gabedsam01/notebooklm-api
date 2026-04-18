@@ -125,11 +125,18 @@ class JobService:
             duration=duration,
             focus_prompt=focus_prompt,
         )
+        timeout_seconds = (
+            self._settings.audio_wait_timeout_seconds 
+            if self._settings.audio_wait_timeout_seconds is not None 
+            else self._settings.artifact_wait_timeout_seconds
+        )
+        poll_interval = self._settings.artifact_poll_interval_seconds
+
         final_reference = await self._notebook_service.wait_for_artifact(
             notebook_id=notebook_id,
             artifact_reference=artifact_reference,
-            timeout_seconds=self._settings.notebook_operation_timeout_seconds,
-            poll_interval_seconds=self._settings.notebook_poll_interval_seconds,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval,
         )
         destination = self._artifact_service.build_path(request_id, ".wav")
         saved = await self._notebook_service.download_artifact(
@@ -159,11 +166,18 @@ class JobService:
             visual_style=visual_style,
             focus_prompt=focus_prompt,
         )
+        timeout_seconds = (
+            self._settings.video_wait_timeout_seconds 
+            if self._settings.video_wait_timeout_seconds is not None 
+            else self._settings.artifact_wait_timeout_seconds
+        )
+        poll_interval = self._settings.artifact_poll_interval_seconds
+
         final_reference = await self._notebook_service.wait_for_artifact(
             notebook_id=notebook_id,
             artifact_reference=artifact_reference,
-            timeout_seconds=self._settings.notebook_operation_timeout_seconds,
-            poll_interval_seconds=self._settings.notebook_poll_interval_seconds,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval,
         )
         destination = self._artifact_service.build_path(request_id, ".mp4")
         saved = await self._notebook_service.download_artifact(
@@ -304,13 +318,33 @@ class JobService:
             duration=payload.duration.value,
             focus_prompt=payload.focus_prompt,
         )
-        self._append_log(job, stage="generate_audio", message="aguardando artefato de audio...")
-        final_reference = await self._notebook_service.wait_for_artifact(
-            notebook_id=notebook_id,
-            artifact_reference=artifact_reference,
-            timeout_seconds=self._settings.notebook_operation_timeout_seconds,
-            poll_interval_seconds=self._settings.notebook_poll_interval_seconds,
+        timeout_seconds = (
+            self._settings.audio_wait_timeout_seconds 
+            if self._settings.audio_wait_timeout_seconds is not None 
+            else self._settings.artifact_wait_timeout_seconds
         )
+        poll_interval = self._settings.artifact_poll_interval_seconds
+
+        def status_updater(status: str) -> None:
+            if status not in ("completed", "failed"):
+                self._update_job(job, status=JobStatus.waiting_remote)
+            self._append_log(job, stage="waiting_remote", message=f"status remoto: {status}")
+
+        self._append_log(job, stage="generate_audio", message="aguardando artefato de audio...")
+        self._update_job(job, status=JobStatus.waiting_remote)
+        
+        try:
+            final_reference = await self._notebook_service.wait_for_artifact(
+                notebook_id=notebook_id,
+                artifact_reference=artifact_reference,
+                timeout_seconds=timeout_seconds,
+                poll_interval_seconds=poll_interval,
+                status_callback=status_updater,
+            )
+        except TimeoutError as exc:
+            self._update_job(job, status=JobStatus.timed_out, error=str(exc))
+            self._append_log(job, stage="timed_out", message=str(exc))
+            raise
 
         self._append_log(job, stage="download_audio", message="baixando artefato de audio...")
         artifact_path = self._artifact_service.build_path(job.id, ".wav")
@@ -347,13 +381,33 @@ class JobService:
             visual_style=payload.visual_style,
             focus_prompt=payload.focus_prompt,
         )
-        self._append_log(job, stage="generate_video", message="aguardando artefato de video...")
-        final_reference = await self._notebook_service.wait_for_artifact(
-            notebook_id=notebook_id,
-            artifact_reference=artifact_reference,
-            timeout_seconds=self._settings.notebook_operation_timeout_seconds,
-            poll_interval_seconds=self._settings.notebook_poll_interval_seconds,
+        timeout_seconds = (
+            self._settings.video_wait_timeout_seconds 
+            if self._settings.video_wait_timeout_seconds is not None 
+            else self._settings.artifact_wait_timeout_seconds
         )
+        poll_interval = self._settings.artifact_poll_interval_seconds
+
+        def status_updater(status: str) -> None:
+            if status not in ("completed", "failed"):
+                self._update_job(job, status=JobStatus.waiting_remote)
+            self._append_log(job, stage="waiting_remote", message=f"status remoto: {status}")
+
+        self._append_log(job, stage="generate_video", message="aguardando artefato de video...")
+        self._update_job(job, status=JobStatus.waiting_remote)
+        
+        try:
+            final_reference = await self._notebook_service.wait_for_artifact(
+                notebook_id=notebook_id,
+                artifact_reference=artifact_reference,
+                timeout_seconds=timeout_seconds,
+                poll_interval_seconds=poll_interval,
+                status_callback=status_updater,
+            )
+        except TimeoutError as exc:
+            self._update_job(job, status=JobStatus.timed_out, error=str(exc))
+            self._append_log(job, stage="timed_out", message=str(exc))
+            raise
 
         self._append_log(job, stage="download_video", message="baixando artefato de video...")
         artifact_path = self._artifact_service.build_path(job.id, ".mp4")

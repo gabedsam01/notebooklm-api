@@ -22,8 +22,12 @@
             <span class="rounded-full bg-emerald-500/20 px-2 py-1 text-xs text-emerald-300">completed</span>
           {% elif job.status.value == 'failed' %}
             <span class="rounded-full bg-rose-500/20 px-2 py-1 text-xs text-rose-300">failed</span>
+          {% elif job.status.value == 'timed_out' %}
+            <span class="rounded-full bg-orange-500/20 px-2 py-1 text-xs text-orange-300">timed out</span>
           {% elif job.status.value == 'running' %}
             <span class="rounded-full bg-amber-500/20 px-2 py-1 text-xs text-amber-300">running</span>
+          {% elif job.status.value == 'waiting_remote' %}
+            <span class="rounded-full bg-indigo-500/20 px-2 py-1 text-xs text-indigo-300">waiting_remote</span>
           {% else %}
             <span class="rounded-full bg-slate-500/20 px-2 py-1 text-xs text-slate-300">queued</span>
           {% endif %}

@@ -31,9 +31,11 @@ Campos principais (`JobRecord`):
 ## Status de job
 
 - `queued`: enfileirado
-- `running`: em execucao
+- `running`: em execucao local
+- `waiting_remote`: aguardando processamento remoto no NotebookLM (comum em audio/video)
 - `completed`: concluido com sucesso
-- `failed`: falhou
+- `failed`: falhou por erro interno ou de rede
+- `timed_out`: excedeu o timeout configurado de espera remota
 
 ## Tipos de job
 

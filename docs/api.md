@@ -179,7 +179,10 @@ Use quando voce precisa:
 - bytes imediatamente no mesmo request
 - fluxo simples sem estado de job exposto
 
-Atencao: o request pode demorar mais, pois inclui espera e download do artefato.
+Atencao: **O request pode demorar muitos minutos** (10-30 min em geracao real de audio/video).
+O timeout maximo e configurado por `ARTIFACT_WAIT_TIMEOUT_SECONDS` (default 30 min).
+
+Recomendado usar `async=true` para geracao real de artefatos.
 
 ## Exemplos com curl
 

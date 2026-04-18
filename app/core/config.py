@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     notebook_operation_timeout_seconds: int = Field(default=240, ge=5)
     notebook_poll_interval_seconds: float = Field(default=2.0, ge=0.2)
 
+    artifact_wait_timeout_seconds: int = Field(default=1800, ge=1)
+    artifact_poll_interval_seconds: float = Field(default=15.0, ge=0.05)
+    audio_wait_timeout_seconds: int | None = None
+    video_wait_timeout_seconds: int | None = None
+
     worker_poll_interval_seconds: float = Field(default=0.2, ge=0.01)
     sqlite_db_path: Path | None = None
 

@@ -37,7 +37,6 @@ class AudioSummaryMode(str, Enum):
 class AudioSummaryDuration(str, Enum):
     short = "short"
     standard = "standard"
-    long = "long"
 
 
 class VideoSummaryMode(str, Enum):

@@ -84,6 +84,9 @@ class NotebookLMService(Protocol):
         status_callback: Any | None = None,
     ) -> str: ...
 
+    async def list_artifacts(self, notebook_id: str) -> list[dict[str, Any]]:
+        ...
+
     async def download_artifact(
         self,
         notebook_id: str,
@@ -244,6 +247,19 @@ class MockNotebookLMService:
                 status_callback("completed")
 
         return artifact_reference
+
+    async def list_artifacts(self, notebook_id: str) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": k,
+                "title": f"Mock Artifact {k}",
+                "media_type": "audio" if "audio" in v.get("media_type", "") else "video",
+                "is_completed": True,
+                "created_at": "2024-01-01T00:00:00Z"
+            }
+            for k, v in self._artifacts.items()
+            if v["notebook_id"] == notebook_id
+        ]
 
     async def download_artifact(
         self,
@@ -440,6 +456,21 @@ class NotebookLMPyService:
                 await asyncio.sleep(poll_interval_seconds)
             
             raise TimeoutError(f"Timeout de {timeout_seconds}s excedido aguardando artefato no NotebookLM.")
+
+    async def list_artifacts(self, notebook_id: str) -> list[dict[str, Any]]:
+        async with await self._get_client() as client:
+            artifacts = await client.artifacts.list(notebook_id=notebook_id)
+            result = []
+            for art in artifacts:
+                media_type = getattr(art.artifact_type, "value", "unknown")
+                result.append({
+                    "id": getattr(art, "id", None),
+                    "title": getattr(art, "title", "Artifact"),
+                    "media_type": media_type,
+                    "is_completed": getattr(art, "is_completed", False),
+                    "created_at": getattr(art, "created_at", ""),
+                })
+            return result
 
     async def download_artifact(
         self,

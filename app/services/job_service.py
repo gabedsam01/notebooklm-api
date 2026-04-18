@@ -132,13 +132,23 @@ class JobService:
         )
         poll_interval = self._settings.artifact_poll_interval_seconds
 
-        final_reference = await self._notebook_service.wait_for_artifact(
-            notebook_id=notebook_id,
-            artifact_reference=artifact_reference,
-            timeout_seconds=timeout_seconds,
-            poll_interval_seconds=poll_interval,
-        )
-        destination = self._artifact_service.build_path(request_id, ".wav")
+        try:
+            final_reference = await self._notebook_service.wait_for_artifact(
+                notebook_id=notebook_id,
+                artifact_reference=artifact_reference,
+                timeout_seconds=timeout_seconds,
+                poll_interval_seconds=poll_interval,
+            )
+        except TimeoutError:
+            final_reference = await self._find_ready_artifact_fallback(notebook_id, "audio")
+            if not final_reference:
+                raise
+
+        import re
+        artifact_title = await self._get_artifact_title(notebook_id, final_reference)
+        safe_title = re.sub(r'[^a-zA-Z0-9_\-]', '_', artifact_title) if artifact_title else request_id
+        destination = self._artifact_service.build_path(safe_title, ".wav")
+        
         saved = await self._download_with_retry(
             notebook_id=notebook_id,
             artifact_reference=final_reference,
@@ -146,6 +156,8 @@ class JobService:
             media_type="audio",
         )
         metadata = self._artifact_service.build_metadata(saved, content_type="audio/wav")
+        if artifact_title:
+            metadata.title = artifact_title
         self._notebook_catalog.increment_artifact_count(notebook_id)
         return saved, metadata, {"artifact_reference": final_reference}
 
@@ -174,13 +186,23 @@ class JobService:
         )
         poll_interval = self._settings.artifact_poll_interval_seconds
 
-        final_reference = await self._notebook_service.wait_for_artifact(
-            notebook_id=notebook_id,
-            artifact_reference=artifact_reference,
-            timeout_seconds=timeout_seconds,
-            poll_interval_seconds=poll_interval,
-        )
-        destination = self._artifact_service.build_path(request_id, ".mp4")
+        try:
+            final_reference = await self._notebook_service.wait_for_artifact(
+                notebook_id=notebook_id,
+                artifact_reference=artifact_reference,
+                timeout_seconds=timeout_seconds,
+                poll_interval_seconds=poll_interval,
+            )
+        except TimeoutError:
+            final_reference = await self._find_ready_artifact_fallback(notebook_id, "video")
+            if not final_reference:
+                raise
+
+        import re
+        artifact_title = await self._get_artifact_title(notebook_id, final_reference)
+        safe_title = re.sub(r'[^a-zA-Z0-9_\-]', '_', artifact_title) if artifact_title else request_id
+        destination = self._artifact_service.build_path(safe_title, ".mp4")
+        
         saved = await self._download_with_retry(
             notebook_id=notebook_id,
             artifact_reference=final_reference,
@@ -188,6 +210,8 @@ class JobService:
             media_type="video",
         )
         metadata = self._artifact_service.build_metadata(saved, content_type="video/mp4")
+        if artifact_title:
+            metadata.title = artifact_title
         self._notebook_catalog.increment_artifact_count(notebook_id)
         return saved, metadata, {"artifact_reference": final_reference}
 
@@ -233,6 +257,119 @@ class JobService:
                     await asyncio.sleep(delay)
 
         raise last_exc  # type: ignore[misc]
+
+    async def _find_ready_artifact_fallback(self, notebook_id: str, media_type: str) -> str | None:
+        """Busca o artefato mais recente pronto (completed) com o media_type especificado."""
+        try:
+            artifacts = await self._notebook_service.list_artifacts(notebook_id)
+            ready = [a for a in artifacts if a.get("is_completed") and a.get("media_type") == media_type]
+            if not ready:
+                return None
+            ready.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+            return ready[0].get("id")
+        except Exception as exc:
+            logger.warning("Falha ao buscar artefatos para fallback: %s", sanitize_exception(exc))
+            return None
+
+    async def _get_artifact_title(self, notebook_id: str, artifact_id: str) -> str | None:
+        try:
+            artifacts = await self._notebook_service.list_artifacts(notebook_id)
+            for a in artifacts:
+                if a.get("id") == artifact_id:
+                    return a.get("title")
+        except Exception:
+            pass
+        return None
+
+    async def sync_notebook_artifacts(self, notebook_id: str) -> int:
+        """Puxa artefatos remotos existentes do notebook e cria JobRecords locais."""
+        try:
+            artifacts = await self._notebook_service.list_artifacts(notebook_id)
+        except Exception as exc:
+            logger.warning("Falha ao listar artefatos do notebook %s: %s", notebook_id, sanitize_exception(exc))
+            return 0
+        
+        imported = 0
+        for a in artifacts:
+            if not a.get("is_completed"):
+                continue
+                
+            job_id = a.get("id")
+            if not job_id:
+                continue
+                
+            existing = self._repository.get(job_id)
+            if existing:
+                continue
+                
+            media_type = a.get("media_type")
+            job_type = JobType.generate_audio_summary if media_type == "audio" else JobType.generate_video_summary
+            
+            job = JobRecord(
+                id=job_id,
+                name=a.get("title") or f"Sincronizado {job_id[:8]}",
+                type=job_type,
+                status=JobStatus.completed,
+                input={"origin": "sync"},
+                result={"artifact_reference": job_id},
+                created_at=_utc_now(),
+                updated_at=_utc_now(),
+                notebook_id=notebook_id,
+            )
+            self._repository.save(job)
+            self._notebook_catalog.increment_artifact_count(notebook_id)
+            imported += 1
+            
+        return imported
+
+    async def trigger_artifact_download(self, job_id: str) -> bool:
+        """Dispara o download de um artefato remoto em background."""
+        job = self._repository.get(job_id)
+        if not job or job.artifact_path or not job.result:
+            return False
+            
+        reference = job.result.get("artifact_reference")
+        if not reference or not job.notebook_id:
+            return False
+            
+        self._update_job(job, status=JobStatus.running)
+        self._append_log(job, stage="download", message="Iniciando download em background...")
+        
+        import asyncio
+        asyncio.create_task(self._background_download(job, reference))
+        return True
+
+    async def _background_download(self, job: JobRecord, reference: str) -> None:
+        try:
+            import re
+            artifact_title = await self._get_artifact_title(job.notebook_id, reference)
+            safe_title = re.sub(r'[^a-zA-Z0-9_\-]', '_', artifact_title) if artifact_title else job.id
+            
+            ext = ".wav" if job.type == JobType.generate_audio_summary else ".mp4"
+            destination = self._artifact_service.build_path(safe_title, ext)
+            
+            media_type = "audio" if ext == ".wav" else "video"
+            saved = await self._download_with_retry(
+                notebook_id=job.notebook_id,
+                artifact_reference=reference,
+                destination_path=destination,
+                media_type=media_type,
+            )
+            
+            metadata = self._artifact_service.build_metadata(saved, content_type=f"{media_type}/{ext[1:]}")
+            if artifact_title:
+                metadata.title = artifact_title
+                
+            self._update_job(
+                job,
+                status=JobStatus.completed,
+                artifact_path=str(destination),
+                artifact_metadata=metadata,
+            )
+            self._append_log(job, stage="download", message="Download concluido com sucesso.")
+        except Exception as exc:
+            self._update_job(job, status=JobStatus.failed, error=str(exc))
+            self._append_log(job, stage="error", message=f"Falha no download: {exc}")
 
     def _prepare_payload(self, payload: JobRequest) -> JobRequest:
         if isinstance(payload, CreateNotebookJobRequest):
@@ -387,12 +524,21 @@ class JobService:
                 status_callback=status_updater,
             )
         except TimeoutError as exc:
-            self._update_job(job, status=JobStatus.timed_out, error=str(exc))
             self._append_log(job, stage="timed_out", message=str(exc))
-            raise
+            self._append_log(job, stage="fallback", message="tentando fallback por descoberta de artefato...")
+            final_reference = await self._find_ready_artifact_fallback(notebook_id, "audio")
+            if not final_reference:
+                self._update_job(job, status=JobStatus.timed_out, error=str(exc))
+                raise
+            self._append_log(job, stage="fallback", message=f"fallback funcionou: artefato {final_reference} encontrado")
 
         self._append_log(job, stage="download_audio", message="baixando artefato de audio...")
-        artifact_path = self._artifact_service.build_path(job.id, ".wav")
+        
+        import re
+        artifact_title = await self._get_artifact_title(notebook_id, final_reference)
+        safe_title = re.sub(r'[^a-zA-Z0-9_\-]', '_', artifact_title) if artifact_title else job.id
+        artifact_path = self._artifact_service.build_path(safe_title, ".wav")
+        
         downloaded_path = await self._download_with_retry(
             notebook_id=notebook_id,
             artifact_reference=final_reference,
@@ -400,6 +546,8 @@ class JobService:
             media_type="audio",
         )
         metadata = self._artifact_service.build_metadata(downloaded_path, content_type="audio/wav")
+        if artifact_title:
+            metadata.title = artifact_title
         self._notebook_catalog.increment_artifact_count(notebook_id)
 
         self._append_log(job, stage="download_audio", message="artefato de audio disponivel")
@@ -451,12 +599,21 @@ class JobService:
                 status_callback=status_updater,
             )
         except TimeoutError as exc:
-            self._update_job(job, status=JobStatus.timed_out, error=str(exc))
             self._append_log(job, stage="timed_out", message=str(exc))
-            raise
+            self._append_log(job, stage="fallback", message="tentando fallback por descoberta de artefato...")
+            final_reference = await self._find_ready_artifact_fallback(notebook_id, "video")
+            if not final_reference:
+                self._update_job(job, status=JobStatus.timed_out, error=str(exc))
+                raise
+            self._append_log(job, stage="fallback", message=f"fallback funcionou: artefato {final_reference} encontrado")
 
         self._append_log(job, stage="download_video", message="baixando artefato de video...")
-        artifact_path = self._artifact_service.build_path(job.id, ".mp4")
+        
+        import re
+        artifact_title = await self._get_artifact_title(notebook_id, final_reference)
+        safe_title = re.sub(r'[^a-zA-Z0-9_\-]', '_', artifact_title) if artifact_title else job.id
+        artifact_path = self._artifact_service.build_path(safe_title, ".mp4")
+        
         downloaded_path = await self._download_with_retry(
             notebook_id=notebook_id,
             artifact_reference=final_reference,
@@ -464,6 +621,8 @@ class JobService:
             media_type="video",
         )
         metadata = self._artifact_service.build_metadata(downloaded_path, content_type="video/mp4")
+        if artifact_title:
+            metadata.title = artifact_title
         self._notebook_catalog.increment_artifact_count(notebook_id)
 
         self._append_log(job, stage="download_video", message="artefato de video disponivel")

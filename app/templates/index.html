@@ -92,7 +92,6 @@
       <select name="duration" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 px-3 py-2 text-sm">
         <option value="short">short</option>
         <option value="standard" selected>standard</option>
-        <option value="long">long</option>
       </select>
       <textarea name="focus_prompt" rows="3" class="w-full rounded-xl border border-slate-700 bg-slate-950/70 p-3 text-sm">Em quais aspectos os apresentadores de IA devem se concentrar nesse episodio?</textarea>
       <button class="rounded-xl bg-amber-400 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-amber-300">Criar job de áudio</button>
@@ -159,4 +158,27 @@
     {% include "partials/jobs_table.html" %}
   </div>
 </section>
+
+<script>
+  let openDetails = new Set();
+  
+  document.body.addEventListener('htmx:beforeSwap', function(evt) {
+    if (evt.detail.target.id === 'jobs-table') {
+      openDetails.clear();
+      evt.detail.target.querySelectorAll('details[open]').forEach(d => {
+        if (d.id) openDetails.add(d.id);
+      });
+    }
+  });
+
+  document.body.addEventListener('htmx:afterSwap', function(evt) {
+    if (evt.detail.target.id === 'jobs-table') {
+      evt.detail.target.querySelectorAll('details').forEach(d => {
+        if (d.id && openDetails.has(d.id)) {
+          d.open = true;
+        }
+      });
+    }
+  });
+</script>
 {% endblock %}

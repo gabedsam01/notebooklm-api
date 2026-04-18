@@ -102,12 +102,27 @@ async def web_sync_notebooks(request: Request) -> HTMLResponse:
     started = time.perf_counter()
     try:
         result = await request.app.state.notebook_catalog_service.sync_from_account()
+        
+        # Sincronizar artefatos para cada notebook importado
+        notebooks = request.app.state.notebook_catalog_service.list_persisted()
+        imported_artifacts = 0
+        job_service = request.app.state.job_service
+        for nb in notebooks:
+            imported_artifacts += await job_service.sync_notebook_artifacts(nb.notebook_id)
+            
+        details = result.model_dump(mode="json")
+        details["imported_artifacts"] = imported_artifacts
+        
+        msg = result.detail
+        if imported_artifacts > 0:
+            msg += f" {imported_artifacts} artefatos encontrados."
+
         return _render_result(
             request,
             variant="success",
             title="Sincronizacao concluida",
-            message=result.detail,
-            details=result.model_dump(mode="json"),
+            message=msg,
+            details=details,
             elapsed_ms=_elapsed_ms(started),
         )
     except Exception as exc:  # noqa: BLE001
@@ -244,6 +259,27 @@ async def web_add_source_batch(
             message=f"{exc.__class__.__name__}: {exc}",
             elapsed_ms=_elapsed_ms(started),
         )
+
+
+@router.post("/web/jobs/{job_id}/download-remote", response_class=HTMLResponse)
+async def web_download_remote(request: Request, job_id: str) -> HTMLResponse:
+    started = time.perf_counter()
+    success = await request.app.state.job_service.trigger_artifact_download(job_id)
+    if not success:
+        return _render_result(
+            request,
+            variant="error",
+            title="Download nao iniciado",
+            message="Nao foi possivel iniciar o download remoto (job nao encontrado, sem referencia ou ja baixado).",
+            elapsed_ms=_elapsed_ms(started),
+        )
+    return _render_result(
+        request,
+        variant="success",
+        title="Download Iniciado",
+        message="Download do artefato remoto iniciado em background.",
+        elapsed_ms=_elapsed_ms(started),
+    )
 
 
 @router.post("/web/jobs/audio", response_class=HTMLResponse)

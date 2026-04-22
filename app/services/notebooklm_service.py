@@ -5,6 +5,7 @@ import importlib
 import inspect
 import io
 import math
+import os
 import shutil
 import time
 import wave
@@ -47,53 +48,22 @@ class NotebookLMService(Protocol):
     async def add_text_source(self, notebook_id: str, title: str, content: str) -> str | None:
         ...
 
-    async def add_text_sources_batch(
-        self,
-        notebook_id: str,
-        sources: list[dict[str, str]],
-    ) -> list[str]:
+    async def add_text_sources_batch(self, notebook_id: str, sources: list[dict[str, str]]) -> list[str]:
         ...
 
-    async def generate_audio_summary(
-        self,
-        notebook_id: str,
-        mode: str,
-        language: str,
-        duration: str,
-        focus_prompt: str,
-    ) -> str:
+    async def generate_audio_summary(self, notebook_id: str, mode: str, language: str, duration: str, focus_prompt: str) -> str:
         ...
 
-    async def generate_video_summary(
-        self,
-        notebook_id: str,
-        mode: str,
-        style: str,
-        language: str,
-        visual_style: str | None,
-        focus_prompt: str,
-    ) -> str:
+    async def generate_video_summary(self, notebook_id: str, mode: str, style: str, language: str, visual_style: str | None, focus_prompt: str) -> str:
         ...
 
-    async def wait_for_artifact(
-        self,
-        notebook_id: str,
-        artifact_reference: str,
-        timeout_seconds: int,
-        poll_interval_seconds: float,
-        status_callback: Any | None = None,
-    ) -> str: ...
+    async def wait_for_artifact(self, notebook_id: str, artifact_reference: str, timeout_seconds: int, poll_interval_seconds: float, status_callback: Any | None = None) -> str:
+        ...
 
     async def list_artifacts(self, notebook_id: str) -> list[dict[str, Any]]:
         ...
 
-    async def download_artifact(
-        self,
-        notebook_id: str,
-        artifact_reference: str,
-        destination_path: Path,
-        media_type: str = "audio",
-    ) -> Path:
+    async def download_artifact(self, notebook_id: str, artifact_reference: str, destination_path: Path, media_type: str = 'audio') -> Path:
         ...
 
 
@@ -107,36 +77,22 @@ class MockNotebookLMService:
 
     async def verify_access(self) -> NotebookAccessCheck:
         if not self._storage_state_service.exists():
-            return NotebookAccessCheck(
-                ok=False,
-                detail="Storage state ausente. Salve cookies em /auth/storage-state.",
-            )
-        return NotebookAccessCheck(ok=True, detail="Acesso validado em modo mock.")
+            return NotebookAccessCheck(ok=False, detail='Storage state ausente. Salve cookies em /auth/storage-state.')
+        return NotebookAccessCheck(ok=True, detail='Acesso validado em modo mock.')
 
     async def list_notebooks(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "id": notebook_id,
-                "title": notebook["title"],
-                "source_count": len(notebook["sources"]),
-            }
-            for notebook_id, notebook in self._notebooks.items()
-        ]
+        return [{'id': notebook_id, 'title': notebook['title'], 'source_count': len(notebook['sources'])} for notebook_id, notebook in self._notebooks.items()]
 
     async def create_notebook(self, title: str) -> str:
-        notebook_id = f"mock-nb-{uuid4().hex}"
-        self._notebooks[notebook_id] = {"id": notebook_id, "title": title, "sources": []}
+        notebook_id = f'mock-nb-{uuid4().hex}'
+        self._notebooks[notebook_id] = {'id': notebook_id, 'title': title, 'sources': []}
         return notebook_id
 
     async def get_notebook(self, notebook_id: str) -> dict[str, Any] | None:
         notebook = self._notebooks.get(notebook_id)
         if notebook is None:
             return None
-        return {
-            "id": notebook["id"],
-            "title": notebook["title"],
-            "source_count": len(notebook["sources"]),
-        }
+        return {'id': notebook['id'], 'title': notebook['title'], 'source_count': len(notebook['sources'])}
 
     async def delete_notebook(self, notebook_id: str) -> None:
         self._notebooks.pop(notebook_id, None)
@@ -144,140 +100,83 @@ class MockNotebookLMService:
     async def add_text_source(self, notebook_id: str, title: str, content: str) -> str:
         notebook = self._notebooks.get(notebook_id)
         if notebook is None:
-            raise NotebookLMOperationError("Notebook nao encontrado")
-        source_id = f"src-{uuid4().hex}"
-        notebook["sources"].append({"id": source_id, "title": title, "content": content})
+            raise NotebookLMOperationError('Notebook nao encontrado')
+        source_id = f'src-{uuid4().hex}'
+        notebook['sources'].append({'id': source_id, 'title': title, 'content': content})
         return source_id
 
-    async def add_text_sources_batch(
-        self,
-        notebook_id: str,
-        sources: list[dict[str, str]],
-    ) -> list[str]:
+    async def add_text_sources_batch(self, notebook_id: str, sources: list[dict[str, str]]) -> list[str]:
         source_ids: list[str] = []
         for source in sources:
-            source_id = await self.add_text_source(
-                notebook_id=notebook_id,
-                title=source["title"],
-                content=source["content"],
-            )
+            source_id = await self.add_text_source(notebook_id=notebook_id, title=source['title'], content=source['content'])
             source_ids.append(source_id)
         return source_ids
 
-    async def generate_audio_summary(
-        self,
-        notebook_id: str,
-        mode: str,
-        language: str,
-        duration: str,
-        focus_prompt: str,
-    ) -> str:
-        _ = mode
-        _ = language
-        _ = duration
-        _ = focus_prompt
+    async def generate_audio_summary(self, notebook_id: str, mode: str, language: str, duration: str, focus_prompt: str) -> str:
+        _ = mode, language, duration, focus_prompt
         notebook = self._notebooks.get(notebook_id)
         if notebook is None:
-            raise NotebookLMOperationError("Notebook nao encontrado para gerar audio")
-        if not notebook["sources"]:
-            raise NotebookLMOperationError("Notebook sem fontes para gerar audio")
-
-        artifact_id = f"audio-{uuid4().hex}"
-        self._artifacts[artifact_id] = {
-            "notebook_id": notebook_id,
-            "media_type": "audio/wav",
-            "bytes": _build_mock_wav(),
-        }
+            raise NotebookLMOperationError('Notebook nao encontrado para gerar audio')
+        if not notebook['sources']:
+            raise NotebookLMOperationError('Notebook sem fontes para gerar audio')
+        artifact_id = f'audio-{uuid4().hex}'
+        self._artifacts[artifact_id] = {'notebook_id': notebook_id, 'media_type': 'audio/wav', 'bytes': _build_mock_wav()}
         return artifact_id
 
-    async def generate_video_summary(
-        self,
-        notebook_id: str,
-        mode: str,
-        style: str,
-        language: str,
-        visual_style: str | None,
-        focus_prompt: str,
-    ) -> str:
-        _ = mode
-        _ = style
-        _ = language
-        _ = visual_style
-        _ = focus_prompt
+    async def generate_video_summary(self, notebook_id: str, mode: str, style: str, language: str, visual_style: str | None, focus_prompt: str) -> str:
+        _ = mode, style, language, visual_style, focus_prompt
         notebook = self._notebooks.get(notebook_id)
         if notebook is None:
-            raise NotebookLMOperationError("Notebook nao encontrado para gerar video")
-        if not notebook["sources"]:
-            raise NotebookLMOperationError("Notebook sem fontes para gerar video")
-
-        artifact_id = f"video-{uuid4().hex}"
-        self._artifacts[artifact_id] = {
-            "notebook_id": notebook_id,
-            "media_type": "video/mp4",
-            "bytes": _build_mock_mp4(),
-        }
+            raise NotebookLMOperationError('Notebook nao encontrado para gerar video')
+        if not notebook['sources']:
+            raise NotebookLMOperationError('Notebook sem fontes para gerar video')
+        artifact_id = f'video-{uuid4().hex}'
+        self._artifacts[artifact_id] = {'notebook_id': notebook_id, 'media_type': 'video/mp4', 'bytes': _build_mock_mp4()}
         return artifact_id
 
-    async def wait_for_artifact(
-        self,
-        notebook_id: str,
-        artifact_reference: str,
-        timeout_seconds: int,
-        poll_interval_seconds: float,
-        status_callback: Any | None = None,
-    ) -> str:
-        _ = notebook_id
-        _ = timeout_seconds
-        _ = poll_interval_seconds
+    async def wait_for_artifact(self, notebook_id: str, artifact_reference: str, timeout_seconds: int, poll_interval_seconds: float, status_callback: Any | None = None) -> str:
+        _ = notebook_id, timeout_seconds, poll_interval_seconds
         if artifact_reference not in self._artifacts:
-            raise NotebookLMOperationError("Artefato nao encontrado")
-        
+            raise NotebookLMOperationError('Artefato nao encontrado')
         if status_callback:
             if asyncio.iscoroutinefunction(status_callback):
-                await status_callback("in_progress")
+                await status_callback('in_progress')
             else:
-                status_callback("in_progress")
-        
+                status_callback('in_progress')
         await asyncio.sleep(0.05)
-        
         if status_callback:
             if asyncio.iscoroutinefunction(status_callback):
-                await status_callback("completed")
+                await status_callback('completed')
             else:
-                status_callback("completed")
-
+                status_callback('completed')
         return artifact_reference
 
     async def list_artifacts(self, notebook_id: str) -> list[dict[str, Any]]:
         return [
             {
-                "id": k,
-                "title": f"Mock Artifact {k}",
-                "media_type": "audio" if "audio" in v.get("media_type", "") else "video",
-                "is_completed": True,
-                "created_at": "2024-01-01T00:00:00Z"
+                'id': k,
+                'title': f'Mock Artifact {k}',
+                'media_type': 'audio' if 'audio' in v.get('media_type', '') else 'video',
+                'is_completed': True,
+                'created_at': '2024-01-01T00:00:00Z',
             }
             for k, v in self._artifacts.items()
-            if v["notebook_id"] == notebook_id
+            if v['notebook_id'] == notebook_id
         ]
 
-    async def download_artifact(
-        self,
-        notebook_id: str,
-        artifact_reference: str,
-        destination_path: Path,
-        media_type: str = "audio",
-    ) -> Path:
+    async def download_artifact(self, notebook_id: str, artifact_reference: str, destination_path: Path, media_type: str = 'audio') -> Path:
         _ = media_type
         artifact = self._artifacts.get(artifact_reference)
         if artifact is None:
-            raise NotebookLMOperationError("Artefato nao encontrado para download")
-        if artifact["notebook_id"] != notebook_id:
-            raise NotebookLMOperationError("Artefato nao pertence ao notebook informado")
-
+            raise NotebookLMOperationError('Artefato nao encontrado para download')
+        if artifact['notebook_id'] != notebook_id:
+            raise NotebookLMOperationError('Artefato nao pertence ao notebook informado')
         destination_path.parent.mkdir(parents=True, exist_ok=True)
-        destination_path.write_bytes(artifact["bytes"])
+        destination_path.write_bytes(artifact['bytes'])
         return destination_path
+
+
+global_env_lock = asyncio.Lock()
 
 
 class NotebookLMPyService:
@@ -285,48 +184,31 @@ class NotebookLMPyService:
 
     def __init__(self, storage_state_service: StorageStateService) -> None:
         self._storage_state_service = storage_state_service
+        self._auth_dir = str(storage_state_service.storage_state_path.parent)
 
-    async def _get_client(self) -> "NotebookLMClient":
+    async def _get_client(self) -> 'NotebookLMClient':
         from notebooklm import NotebookLMClient
         if not self._storage_state_service.exists():
-            raise NotebookLMOperationError("Storage state ausente. Salve cookies em /auth/storage-state.")
-        
+            raise NotebookLMOperationError('Storage state ausente. Salve cookies em /auth/storage-state.')
         try:
             return await NotebookLMClient.from_storage(str(self._storage_state_service.storage_state_path))
         except Exception as exc:
-            raise NotebookLMOperationError(f"Falha ao inicializar cliente: {sanitize_exception(exc)}") from exc
+            raise NotebookLMOperationError(f'Falha ao inicializar cliente: {sanitize_exception(exc)}') from exc
 
     async def verify_access(self) -> NotebookAccessCheck:
         if not self._storage_state_service.exists():
-            return NotebookAccessCheck(
-                ok=False,
-                detail="Storage state ausente. Salve cookies em /auth/storage-state.",
-            )
-
+            return NotebookAccessCheck(ok=False, detail='Storage state ausente. Salve cookies em /auth/storage-state.')
         try:
             async with await self._get_client() as client:
                 await client.notebooks.list()
-            return NotebookAccessCheck(ok=True, detail="Sessao NotebookLM validada.")
-        except Exception as exc:  # noqa: BLE001
-            return NotebookAccessCheck(
-                ok=False,
-                detail=(
-                    "Falha ao validar sessao notebooklm-py "
-                    f"({sanitize_exception(exc)})."
-                ),
-            )
+            return NotebookAccessCheck(ok=True, detail='Sessao NotebookLM validada.')
+        except Exception as exc:
+            return NotebookAccessCheck(ok=False, detail='Falha ao validar sessao notebooklm-py (' + sanitize_exception(exc) + ').')
 
     async def list_notebooks(self) -> list[dict[str, Any]]:
         async with await self._get_client() as client:
             notebooks = await client.notebooks.list()
-            return [
-                {
-                    "id": nb.id,
-                    "title": nb.title,
-                    "source_count": nb.sources_count,
-                }
-                for nb in notebooks
-            ]
+            return [{'id': nb.id, 'title': nb.title, 'source_count': nb.sources_count} for nb in notebooks]
 
     async def create_notebook(self, title: str) -> str:
         async with await self._get_client() as client:
@@ -338,20 +220,14 @@ class NotebookLMPyService:
             from notebooklm.exceptions import NotebookNotFoundError
         except ImportError:
             NotebookNotFoundError = Exception
-
         async with await self._get_client() as client:
             try:
                 notebook = await client.notebooks.get(notebook_id)
-                return {
-                    "id": notebook.id,
-                    "title": notebook.title,
-                    "source_count": notebook.sources_count,
-                }
+                return {'id': notebook.id, 'title': notebook.title, 'source_count': notebook.sources_count}
             except NotebookNotFoundError:
                 return None
-            except Exception as e:
-                # If the exception is 'not found' by string
-                if "not found" in str(e).lower() or "404" in str(e):
+            except Exception as exc:
+                if 'not found' in str(exc).lower() or '404' in str(exc):
                     return None
                 raise
 
@@ -364,74 +240,36 @@ class NotebookLMPyService:
             source = await client.sources.add_text(notebook_id, title=title, content=content)
             return source.id
 
-    async def add_text_sources_batch(
-        self,
-        notebook_id: str,
-        sources: list[dict[str, str]],
-    ) -> list[str]:
+    async def add_text_sources_batch(self, notebook_id: str, sources: list[dict[str, str]]) -> list[str]:
         source_ids: list[str] = []
         async with await self._get_client() as client:
             for source in sources:
-                src = await client.sources.add_text(notebook_id, title=source["title"], content=source["content"])
+                src = await client.sources.add_text(notebook_id, title=source['title'], content=source['content'])
                 source_ids.append(src.id)
         return source_ids
 
-    async def generate_audio_summary(
-        self,
-        notebook_id: str,
-        mode: str,
-        language: str,
-        duration: str,
-        focus_prompt: str,
-    ) -> str:
+    async def generate_audio_summary(self, notebook_id: str, mode: str, language: str, duration: str, focus_prompt: str) -> str:
+        _ = mode, duration
         async with await self._get_client() as client:
-            # We can map parameters, but for now we just pass language and instructions
-            status = await client.artifacts.generate_audio(
-                notebook_id=notebook_id,
-                language=language,
-                instructions=focus_prompt if focus_prompt else None,
-            )
+            status = await client.artifacts.generate_audio(notebook_id=notebook_id, language=language, instructions=focus_prompt if focus_prompt else None)
             return status.task_id
 
-    async def generate_video_summary(
-        self,
-        notebook_id: str,
-        mode: str,
-        style: str,
-        language: str,
-        visual_style: str | None,
-        focus_prompt: str,
-    ) -> str:
+    async def generate_video_summary(self, notebook_id: str, mode: str, style: str, language: str, visual_style: str | None, focus_prompt: str) -> str:
+        _ = mode, style, visual_style
         async with await self._get_client() as client:
-            status = await client.artifacts.generate_video(
-                notebook_id=notebook_id,
-                language=language,
-                instructions=focus_prompt if focus_prompt else None,
-            )
+            status = await client.artifacts.generate_video(notebook_id=notebook_id, language=language, instructions=focus_prompt if focus_prompt else None)
             return status.task_id
 
-    async def wait_for_artifact(
-        self,
-        notebook_id: str,
-        artifact_reference: str,
-        timeout_seconds: int,
-        poll_interval_seconds: float,
-        status_callback: Any | None = None,
-    ) -> str:
+    async def wait_for_artifact(self, notebook_id: str, artifact_reference: str, timeout_seconds: int, poll_interval_seconds: float, status_callback: Any | None = None) -> str:
         async with await self._get_client() as client:
             start_time = time.monotonic()
             last_status = None
             consecutive_errors = 0
-            
             while time.monotonic() - start_time < timeout_seconds:
                 try:
-                    status_obj = await client.artifacts.poll_status(
-                        notebook_id=notebook_id,
-                        task_id=artifact_reference,
-                    )
+                    status_obj = await client.artifacts.poll_status(notebook_id=notebook_id, task_id=artifact_reference)
                     consecutive_errors = 0
-                    current_status = getattr(status_obj, "status", "unknown")
-                    
+                    current_status = getattr(status_obj, 'status', 'unknown')
                     if current_status != last_status:
                         if status_callback:
                             if asyncio.iscoroutinefunction(status_callback):
@@ -439,92 +277,58 @@ class NotebookLMPyService:
                             else:
                                 status_callback(current_status)
                         last_status = current_status
-
-                    if current_status == "completed":
-                        return getattr(status_obj, "task_id", artifact_reference) or artifact_reference
-                    elif current_status == "failed":
-                        error_msg = getattr(status_obj, "error", "Erro desconhecido")
-                        raise NotebookLMOperationError(f"Geracao de artefato falhou remotamente: {error_msg}")
-                    # Continue waiting for "pending", "in_progress", "unknown"
+                    if current_status == 'completed':
+                        return getattr(status_obj, 'task_id', artifact_reference) or artifact_reference
+                    if current_status == 'failed':
+                        error_msg = getattr(status_obj, 'error', 'Erro desconhecido')
+                        raise NotebookLMOperationError(f'Geracao de artefato falhou remotamente: {error_msg}')
                 except NotebookLMOperationError:
                     raise
-                except Exception as e:
+                except Exception as exc:
                     consecutive_errors += 1
                     if consecutive_errors > 5:
-                        raise NotebookLMOperationError(f"Muitos erros consecutivos ao consultar status do artefato: {sanitize_exception(e)}")
-                
+                        raise NotebookLMOperationError('Muitos erros consecutivos ao consultar status do artefato: ' + sanitize_exception(exc))
                 await asyncio.sleep(poll_interval_seconds)
-            
-            raise TimeoutError(f"Timeout de {timeout_seconds}s excedido aguardando artefato no NotebookLM.")
+            raise TimeoutError(f'Timeout de {timeout_seconds}s excedido aguardando artefato no NotebookLM.')
 
     async def list_artifacts(self, notebook_id: str) -> list[dict[str, Any]]:
         async with await self._get_client() as client:
             artifacts = await client.artifacts.list(notebook_id=notebook_id)
             result = []
             for art in artifacts:
-                media_type = getattr(art.artifact_type, "value", "unknown")
-                result.append({
-                    "id": getattr(art, "id", None),
-                    "title": getattr(art, "title", "Artifact"),
-                    "media_type": media_type,
-                    "is_completed": getattr(art, "is_completed", False),
-                    "created_at": getattr(art, "created_at", ""),
-                })
+                media_type = getattr(art.artifact_type, 'value', 'unknown')
+                result.append({'id': getattr(art, 'id', None), 'title': getattr(art, 'title', 'Artifact'), 'media_type': media_type, 'is_completed': getattr(art, 'is_completed', False), 'created_at': getattr(art, 'created_at', '')})
             return result
 
-    async def download_artifact(
-        self,
-        notebook_id: str,
-        artifact_reference: str,
-        destination_path: Path,
-        media_type: str = "audio",
-    ) -> Path:
-        """Download de artefato tipado (audio ou video).
-
-        O caller (JobService) informa o ``media_type`` para que a chamada
-        vá direto ao método correto da lib, evitando tentativas
-        sequenciais cegas.
-        """
-        async with await self._get_client() as client:
-            destination_path.parent.mkdir(parents=True, exist_ok=True)
-
+    async def download_artifact(self, notebook_id: str, artifact_reference: str, destination_path: Path, media_type: str = 'audio') -> Path:
+        async with global_env_lock:
+            original_home = os.environ.get('NOTEBOOKLM_HOME')
+            os.environ['NOTEBOOKLM_HOME'] = self._auth_dir
             try:
-                if media_type == "video":
-                    await client.artifacts.download_video(
-                        notebook_id=notebook_id,
-                        output_path=str(destination_path),
-                        artifact_id=artifact_reference,
-                    )
+                async with await self._get_client() as client:
+                    destination_path.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        if media_type == 'video':
+                            await client.artifacts.download_video(notebook_id=notebook_id, output_path=str(destination_path), artifact_id=artifact_reference)
+                        else:
+                            await client.artifacts.download_audio(notebook_id=notebook_id, output_path=str(destination_path), artifact_id=artifact_reference)
+                    except Exception as exc:
+                        raise NotebookLMOperationError(f'Falha ao baixar artefato ({media_type}): {sanitize_exception(exc)}') from exc
+                    if not destination_path.exists():
+                        raise NotebookLMOperationError(f'Falha silenciosa: O arquivo do artefato nao foi criado em {destination_path}')
+                    if destination_path.stat().st_size == 0:
+                        destination_path.unlink()
+                        raise NotebookLMOperationError('Falha no download: O arquivo baixado tem tamanho 0 bytes.')
+                    return destination_path
+            finally:
+                if original_home is None:
+                    os.environ.pop('NOTEBOOKLM_HOME', None)
                 else:
-                    await client.artifacts.download_audio(
-                        notebook_id=notebook_id,
-                        output_path=str(destination_path),
-                        artifact_id=artifact_reference,
-                    )
-            except Exception as exc:
-                raise NotebookLMOperationError(
-                    f"Falha ao baixar artefato ({media_type}): {sanitize_exception(exc)}"
-                ) from exc
-
-            # Robustness check: Ensure file exists and is not empty
-            if not destination_path.exists():
-                raise NotebookLMOperationError(
-                    f"Falha silenciosa: O arquivo do artefato nao foi criado em {destination_path}"
-                )
-            if destination_path.stat().st_size == 0:
-                destination_path.unlink()
-                raise NotebookLMOperationError(
-                    "Falha no download: O arquivo baixado tem tamanho 0 bytes."
-                )
-
-            return destination_path
+                    os.environ['NOTEBOOKLM_HOME'] = original_home
 
 
-def build_notebook_service(
-    settings: Settings,
-    storage_state_service: StorageStateService,
-) -> NotebookLMService:
-    if settings.notebooklm_mode == "real":
+def build_notebook_service(settings: Settings, storage_state_service: StorageStateService) -> NotebookLMService:
+    if settings.notebooklm_mode == 'real':
         return NotebookLMPyService(storage_state_service=storage_state_service)
     return MockNotebookLMService(storage_state_service=storage_state_service)
 
@@ -551,9 +355,8 @@ def _build_mock_wav() -> bytes:
     duration_seconds = 1.2
     frequency_hz = 220.0
     total_frames = int(sample_rate * duration_seconds)
-
     with io.BytesIO() as buffer:
-        with wave.open(buffer, "wb") as wav_file:
+        with wave.open(buffer, 'wb') as wav_file:
             wav_file.setnchannels(1)
             wav_file.setsampwidth(2)
             wav_file.setframerate(sample_rate)
@@ -561,11 +364,10 @@ def _build_mock_wav() -> bytes:
             for index in range(total_frames):
                 t = index / sample_rate
                 amplitude = int(16_000 * math.sin(2.0 * math.pi * frequency_hz * t))
-                frames.extend(amplitude.to_bytes(2, byteorder="little", signed=True))
+                frames.extend(amplitude.to_bytes(2, byteorder='little', signed=True))
             wav_file.writeframes(bytes(frames))
         return buffer.getvalue()
 
 
 def _build_mock_mp4() -> bytes:
-    # Minimal byte sequence with MP4-like signature for integration tests.
-    return b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom\x00\x00\x00\x08free"
+    return bytes.fromhex('00000018667479706d703432000000006d70343269736f6d0000000866726565')

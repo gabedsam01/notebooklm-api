@@ -19,10 +19,12 @@ class NotebookTarget(BaseModel):
 
 class NotebookCreateRequest(BaseModel):
     title: str = Field(min_length=1, max_length=200)
+    account_id: str | None = Field(default=None, min_length=1)
 
 
 class PersistedNotebook(BaseModel):
     local_id: int
+    account_id: str = "default"
     notebook_id: str
     title: str
     source_count: int = 0
@@ -46,6 +48,7 @@ class NotebookDeleteResultResponse(BaseModel):
     status: str
     notebook_id: str
     local_id: int | None = None
+    account_id: str | None = None
     deleted_remote: bool
     deleted_local: bool
     detail: str
@@ -57,6 +60,7 @@ class NotebookListResponse(BaseModel):
 
 
 class NotebookSyncResponse(BaseModel):
+    account_id: str
     found_in_account: int
     imported_count: int
     stale_local_count: int

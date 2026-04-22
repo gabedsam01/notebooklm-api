@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.deps import get_notebook_catalog_service, get_notebook_service
+from app.api.deps import get_current_account, get_notebook_catalog_service, get_notebook_service
+from app.models.account import AccountResponse
 from app.models.notebooks import (
     NotebookCreateRequest,
     NotebookDeleteResultResponse,
@@ -21,6 +22,7 @@ async def create_notebook(
     payload: NotebookCreateRequest,
     notebook_service: NotebookLMService = Depends(get_notebook_service),
     notebook_catalog: NotebookCatalogService = Depends(get_notebook_catalog_service),
+    account: AccountResponse = Depends(get_current_account),
 ) -> NotebookResponse:
     await _ensure_access(notebook_service)
     return await notebook_catalog.create_and_persist(payload.title)

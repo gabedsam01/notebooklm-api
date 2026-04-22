@@ -23,6 +23,7 @@ class NotebookRepository:
         artifact_count: int,
         origin: str,
         metadata: dict[str, Any] | None = None,
+        account_id: str = "default",
     ) -> PersistedNotebook:
         now = _utc_now_iso()
         metadata_json = json.dumps(metadata or {}, ensure_ascii=False)
@@ -31,9 +32,9 @@ class NotebookRepository:
             conn.execute(
                 """
                 INSERT INTO notebooks (
-                    notebook_id, title, source_count, artifact_count, origin, metadata_json, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(notebook_id) DO UPDATE SET
+                    account_id, notebook_id, title, source_count, artifact_count, origin, metadata_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(account_id, notebook_id) DO UPDATE SET
                     title=excluded.title,
                     source_count=excluded.source_count,
                     artifact_count=excluded.artifact_count,
@@ -41,74 +42,71 @@ class NotebookRepository:
                     metadata_json=excluded.metadata_json,
                     updated_at=excluded.updated_at
                 """,
-                (
-                    notebook_id,
-                    title,
-                    source_count,
-                    artifact_count,
-                    origin,
-                    metadata_json,
-                    now,
-                    now,
-                ),
+                (account_id, notebook_id, title, source_count, artifact_count, origin, metadata_json, now, now),
             )
 
-        record = self.get_by_notebook_id(notebook_id)
+        record = self.get_by_notebook_id(account_id, notebook_id)
         if record is None:
             raise RuntimeError("Falha ao persistir notebook")
         return record
 
-    def get_by_notebook_id(self, notebook_id: str) -> PersistedNotebook | None:
+    def get_by_notebook_id(self, account_id: str, notebook_id: str) -> PersistedNotebook | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM notebooks WHERE notebook_id = ?",
-                (notebook_id,),
+                "SELECT * FROM notebooks WHERE account_id = ? AND notebook_id = ?",
+                (account_id, notebook_id),
             ).fetchone()
         return _row_to_model(row)
 
-    def get_by_local_id(self, local_id: int) -> PersistedNotebook | None:
+    def get_by_local_id(self, account_id: str, local_id: int) -> PersistedNotebook | None:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM notebooks WHERE id = ?",
-                (local_id,),
+                "SELECT * FROM notebooks WHERE account_id = ? AND id = ?",
+                (account_id, local_id),
             ).fetchone()
         return _row_to_model(row)
 
-    def list_all(self) -> list[PersistedNotebook]:
+    def list_all(self, account_id: str | None = None) -> list[PersistedNotebook]:
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM notebooks ORDER BY updated_at DESC, id DESC"
-            ).fetchall()
+            if account_id is None:
+                rows = conn.execute(
+                    "SELECT * FROM notebooks ORDER BY updated_at DESC, id DESC"
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM notebooks WHERE account_id = ? ORDER BY updated_at DESC, id DESC",
+                    (account_id,),
+                ).fetchall()
         return [item for item in (_row_to_model(row) for row in rows) if item is not None]
 
-    def increment_artifact_count(self, notebook_id: str, amount: int = 1) -> None:
+    def increment_artifact_count(self, account_id: str, notebook_id: str, amount: int = 1) -> None:
         now = _utc_now_iso()
         with self._connect() as conn:
             conn.execute(
                 """
                 UPDATE notebooks
                 SET artifact_count = artifact_count + ?, updated_at = ?
-                WHERE notebook_id = ?
+                WHERE account_id = ? AND notebook_id = ?
                 """,
-                (amount, now, notebook_id),
+                (amount, now, account_id, notebook_id),
             )
 
-    def delete_by_notebook_id(self, notebook_id: str) -> tuple[bool, int | None]:
-        existing = self.get_by_notebook_id(notebook_id)
+    def delete_by_notebook_id(self, notebook_id: str, account_id: str = "default") -> tuple[bool, int | None]:
+        existing = self.get_by_notebook_id(account_id, notebook_id)
         if existing is None:
             return False, None
 
         with self._connect() as conn:
-            conn.execute("DELETE FROM notebooks WHERE notebook_id = ?", (notebook_id,))
+            conn.execute("DELETE FROM notebooks WHERE account_id = ? AND notebook_id = ?", (account_id, notebook_id))
         return True, existing.local_id
 
-    def delete_by_local_id(self, local_id: int) -> tuple[bool, str | None]:
-        existing = self.get_by_local_id(local_id)
+    def delete_by_local_id(self, local_id: int, account_id: str = "default") -> tuple[bool, str | None]:
+        existing = self.get_by_local_id(account_id, local_id)
         if existing is None:
             return False, None
 
         with self._connect() as conn:
-            conn.execute("DELETE FROM notebooks WHERE id = ?", (local_id,))
+            conn.execute("DELETE FROM notebooks WHERE account_id = ? AND id = ?", (account_id, local_id))
         return True, existing.notebook_id
 
     def _init_schema(self) -> None:
@@ -117,7 +115,8 @@ class NotebookRepository:
                 """
                 CREATE TABLE IF NOT EXISTS notebooks (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    notebook_id TEXT NOT NULL UNIQUE,
+                    account_id TEXT NOT NULL DEFAULT 'default',
+                    notebook_id TEXT NOT NULL,
                     title TEXT NOT NULL,
                     source_count INTEGER NOT NULL DEFAULT 0,
                     artifact_count INTEGER NOT NULL DEFAULT 0,
@@ -127,6 +126,12 @@ class NotebookRepository:
                     updated_at TEXT NOT NULL
                 )
                 """
+            )
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(notebooks)").fetchall()}
+            if "account_id" not in cols:
+                conn.execute("ALTER TABLE notebooks ADD COLUMN account_id TEXT NOT NULL DEFAULT 'default'")
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_notebooks_account_notebook ON notebooks(account_id, notebook_id)"
             )
 
     def _connect(self) -> sqlite3.Connection:
@@ -140,6 +145,7 @@ def _row_to_model(row: sqlite3.Row | None) -> PersistedNotebook | None:
         return None
     return PersistedNotebook(
         local_id=int(row["id"]),
+        account_id=str(row["account_id"]),
         notebook_id=str(row["notebook_id"]),
         title=str(row["title"]),
         source_count=int(row["source_count"]),

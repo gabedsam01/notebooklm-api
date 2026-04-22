@@ -22,8 +22,11 @@ router = APIRouter(include_in_schema=False)
 
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> HTMLResponse:
-    auth_status = await request.app.state.auth_service.get_status(request.app.state.notebook_service)
-    jobs = request.app.state.job_service.list_jobs()[:20]
+    auth_status = await request.app.state.auth_service.get_status(
+        request.app.state.account_registry.default_account_id,
+        request.app.state.notebook_service,
+    )
+    jobs = request.app.state.job_service.list_jobs(account_id=request.app.state.account_registry.default_account_id)[:20]
     notebooks = request.app.state.notebook_catalog_service.list_persisted()[:50]
     context = {
         "request": request,
@@ -47,7 +50,10 @@ async def web_save_storage_state(
     try:
         parsed = json.loads(storage_state_json)
         payload = StorageStatePayload.model_validate(parsed)
-        result = request.app.state.auth_service.save_storage_state(payload)
+        result = request.app.state.auth_service.save_storage_state(
+            request.app.state.account_registry.default_account_id,
+            payload,
+        )
         response = _render_result(
             request,
             variant="success",
@@ -102,21 +108,16 @@ async def web_sync_notebooks(request: Request) -> HTMLResponse:
     started = time.perf_counter()
     try:
         result = await request.app.state.notebook_catalog_service.sync_from_account()
-        
-        # Sincronizar artefatos para cada notebook importado
         notebooks = request.app.state.notebook_catalog_service.list_persisted()
         imported_artifacts = 0
         job_service = request.app.state.job_service
         for nb in notebooks:
-            imported_artifacts += await job_service.sync_notebook_artifacts(nb.notebook_id)
-            
+            imported_artifacts += await job_service.sync_notebook_artifacts(request.app.state.account_registry.default_account_id, nb.notebook_id)
         details = result.model_dump(mode="json")
         details["imported_artifacts"] = imported_artifacts
-        
         msg = result.detail
         if imported_artifacts > 0:
             msg += f" {imported_artifacts} artefatos encontrados."
-
         return _render_result(
             request,
             variant="success",
@@ -298,6 +299,7 @@ async def web_create_audio_job(
         payload = GenerateAudioSummaryJobRequest(
             name=name or None,
             type="generate_audio_summary",
+            account_id=request.app.state.account_registry.default_account_id,
             notebook_id=notebook_id.strip() or None,
             local_id=int(local_id) if local_id.strip() else None,
             mode=AudioSummaryMode(mode),
@@ -341,6 +343,7 @@ async def web_create_video_job(
         payload = GenerateVideoSummaryJobRequest(
             name=name or None,
             type="generate_video_summary",
+            account_id=request.app.state.account_registry.default_account_id,
             notebook_id=notebook_id.strip() or None,
             local_id=int(local_id) if local_id.strip() else None,
             mode=VideoSummaryMode(mode),
@@ -374,7 +377,11 @@ async def web_search_jobs(
     job_id: str = "",
     name: str = "",
 ) -> HTMLResponse:
-    jobs = request.app.state.job_service.list_jobs(job_id=job_id or None, name=name or None)
+    jobs = request.app.state.job_service.list_jobs(
+        job_id=job_id or None,
+        name=name or None,
+        account_id=request.app.state.account_registry.default_account_id,
+    )
     return request.app.state.templates.TemplateResponse(
         request=request,
         name="partials/jobs_table.html",

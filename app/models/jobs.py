@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -10,56 +11,58 @@ from app.models.sources import TextSourceInput
 
 
 class JobStatus(str, Enum):
-    queued = "queued"
-    running = "running"
-    waiting_remote = "waiting_remote"
-    completed = "completed"
-    failed = "failed"
-    timed_out = "timed_out"
+    queued = 'queued'
+    running = 'running'
+    waiting_remote = 'waiting_remote'
+    completed = 'completed'
+    failed = 'failed'
+    timed_out = 'timed_out'
 
 
 class JobType(str, Enum):
-    create_notebook = "create_notebook"
-    add_source = "add_source"
-    add_sources_batch = "add_sources_batch"
-    generate_audio_summary = "generate_audio_summary"
-    generate_video_summary = "generate_video_summary"
-    delete_notebook = "delete_notebook"
+    create_notebook = 'create_notebook'
+    add_source = 'add_source'
+    add_sources_batch = 'add_sources_batch'
+    generate_audio_summary = 'generate_audio_summary'
+    generate_video_summary = 'generate_video_summary'
+    delete_notebook = 'delete_notebook'
 
 
 class AudioSummaryMode(str, Enum):
-    detailed_analysis = "detailed_analysis"
-    summary = "summary"
-    critical_review = "critical_review"
-    debate = "debate"
+    detailed_analysis = 'detailed_analysis'
+    summary = 'summary'
+    critical_review = 'critical_review'
+    debate = 'debate'
 
 
 class AudioSummaryDuration(str, Enum):
-    short = "short"
-    standard = "standard"
+    short = 'short'
+    standard = 'standard'
 
 
 class VideoSummaryMode(str, Enum):
-    explanatory_video = "explanatory_video"
+    explanatory_video = 'explanatory_video'
 
 
 class VideoSummaryStyle(str, Enum):
-    summary = "summary"
+    summary = 'summary'
 
 
 class NotebookTargetMixin(BaseModel):
     notebook_id: str | None = Field(default=None, min_length=1)
     local_id: int | None = Field(default=None, ge=1)
+    account_id: str | None = Field(default=None, min_length=1)
 
-    @model_validator(mode="after")
-    def _validate_target(self) -> "NotebookTargetMixin":
+    @model_validator(mode='after')
+    def _validate_target(self) -> 'NotebookTargetMixin':
         if not self.notebook_id and self.local_id is None:
-            raise ValueError("Informe notebook_id ou local_id")
+            raise ValueError('Informe notebook_id ou local_id')
         return self
 
 
 class BaseJobRequest(BaseModel):
     name: str | None = Field(default=None, max_length=200)
+    account_id: str | None = Field(default=None, min_length=1)
 
 
 class CreateNotebookJobRequest(BaseJobRequest):
@@ -81,28 +84,18 @@ class AddSourcesBatchJobRequest(BaseJobRequest, NotebookTargetMixin):
 class GenerateAudioSummaryJobRequest(BaseJobRequest, NotebookTargetMixin):
     type: Literal[JobType.generate_audio_summary.value]
     mode: AudioSummaryMode = AudioSummaryMode.summary
-    language: str = Field(default="pt-BR", min_length=2, max_length=20)
+    language: str = Field(default='pt-BR', min_length=2, max_length=20)
     duration: AudioSummaryDuration = AudioSummaryDuration.standard
-    focus_prompt: str = Field(
-        default=(
-            "Em quais aspectos os apresentadores de IA devem se concentrar nesse episodio?"
-        ),
-        min_length=3,
-        max_length=2_000,
-    )
+    focus_prompt: str = Field(default='Em quais aspectos os apresentadores de IA devem se concentrar nesse episodio?', min_length=3, max_length=2_000)
 
 
 class GenerateVideoSummaryJobRequest(BaseJobRequest, NotebookTargetMixin):
     type: Literal[JobType.generate_video_summary.value]
     mode: VideoSummaryMode = VideoSummaryMode.explanatory_video
     style: VideoSummaryStyle = VideoSummaryStyle.summary
-    language: str = Field(default="pt-BR", min_length=2, max_length=20)
-    visual_style: str | None = Field(default="auto", max_length=100)
-    focus_prompt: str = Field(
-        default="Em quais aspectos os apresentadores de IA devem se concentrar?",
-        min_length=3,
-        max_length=2_000,
-    )
+    language: str = Field(default='pt-BR', min_length=2, max_length=20)
+    visual_style: str | None = Field(default='auto', max_length=100)
+    focus_prompt: str = Field(default='Em quais aspectos os apresentadores de IA devem se concentrar?', min_length=3, max_length=2_000)
 
 
 class DeleteNotebookJobRequest(BaseJobRequest, NotebookTargetMixin):
@@ -118,7 +111,7 @@ JobRequest = Annotated[
         | GenerateVideoSummaryJobRequest
         | DeleteNotebookJobRequest
     ),
-    Field(discriminator="type"),
+    Field(discriminator='type'),
 ]
 
 
@@ -127,6 +120,7 @@ class ArtifactMetadata(BaseModel):
     content_type: str
     size_bytes: int
     sha256: str
+    title: str | None = None
 
 
 class JobLogEntry(BaseModel):
@@ -148,6 +142,7 @@ class JobRecord(BaseModel):
     completed_at: datetime | None = None
     updated_at: datetime
     duration_ms: int | None = None
+    account_id: str | None = None
     notebook_id: str | None = None
     artifact_path: str | None = None
     artifact_metadata: ArtifactMetadata | None = None

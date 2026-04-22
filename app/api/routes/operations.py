@@ -3,8 +3,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import FileResponse
 
-from app.api.deps import get_job_service, get_notebook_catalog_service, get_notebook_service
-from app.models.jobs import GenerateAudioSummaryJobRequest, GenerateVideoSummaryJobRequest, JobRecord
+from app.api.deps import get_current_account, get_job_service, get_notebook_catalog_service, get_notebook_service
+from app.models.account import AccountResponse
+from app.models.jobs import GenerateAudioSummaryJobRequest, GenerateVideoSummaryJobRequest
 from app.models.operations import AudioSummaryOperationRequest, VideoSummaryOperationRequest
 from app.services.job_service import JobService
 from app.services.notebook_catalog_service import NotebookCatalogService
@@ -21,6 +22,7 @@ async def audio_summary_operation(
     notebook_service: NotebookLMService = Depends(get_notebook_service),
     notebook_catalog: NotebookCatalogService = Depends(get_notebook_catalog_service),
     job_service: JobService = Depends(get_job_service),
+    account: AccountResponse = Depends(get_current_account),
 ) -> object:
     await _ensure_access(notebook_service)
     resolved = notebook_catalog.resolve_notebook_id(payload.notebook_id, payload.local_id)
@@ -30,6 +32,7 @@ async def audio_summary_operation(
         job_payload = GenerateAudioSummaryJobRequest(
             name=payload.name,
             type="generate_audio_summary",
+            account_id=account.id,
             notebook_id=resolved.notebook_id,
             local_id=resolved.local_id,
             mode=payload.mode,
@@ -40,6 +43,7 @@ async def audio_summary_operation(
         return await job_service.submit_job(job_payload)
 
     artifact_path, metadata, _ = await job_service.generate_audio_sync(
+        account_id=account.id,
         notebook_id=resolved.notebook_id,
         mode=payload.mode.value,
         language=payload.language,
@@ -57,6 +61,7 @@ async def video_summary_operation(
     notebook_service: NotebookLMService = Depends(get_notebook_service),
     notebook_catalog: NotebookCatalogService = Depends(get_notebook_catalog_service),
     job_service: JobService = Depends(get_job_service),
+    account: AccountResponse = Depends(get_current_account),
 ) -> object:
     await _ensure_access(notebook_service)
     resolved = notebook_catalog.resolve_notebook_id(payload.notebook_id, payload.local_id)
@@ -66,6 +71,7 @@ async def video_summary_operation(
         job_payload = GenerateVideoSummaryJobRequest(
             name=payload.name,
             type="generate_video_summary",
+            account_id=account.id,
             notebook_id=resolved.notebook_id,
             local_id=resolved.local_id,
             mode=payload.mode,
@@ -77,6 +83,7 @@ async def video_summary_operation(
         return await job_service.submit_job(job_payload)
 
     artifact_path, metadata, _ = await job_service.generate_video_sync(
+        account_id=account.id,
         notebook_id=resolved.notebook_id,
         mode=payload.mode.value,
         style=payload.style.value,

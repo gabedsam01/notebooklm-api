@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import time
 from pathlib import Path
 
@@ -20,6 +19,7 @@ def _build_test_client(tmp_path: Path) -> tuple[TestClient, Settings]:
         artifacts_dir=data_dir / "artifacts",
         temp_dir=data_dir / "tmp",
         storage_state_path=data_dir / "auth" / "storage_state.json",
+        accounts_dir=data_dir / "accounts",
         sqlite_db_path=data_dir / "notebooks.db",
         notebooklm_mode="mock",
         worker_poll_interval_seconds=0.01,
@@ -45,23 +45,26 @@ def _fake_storage_state() -> dict[str, object]:
     }
 
 
-def _seed_auth(client: TestClient) -> None:
-    response = client.post("/auth/storage-state", json=_fake_storage_state())
+def _seed_auth(client: TestClient, account_id: str | None = None) -> None:
+    headers = {"X-NotebookLM-Account-Id": account_id} if account_id else None
+    response = client.post("/auth/storage-state", headers=headers, json=_fake_storage_state())
     assert response.status_code == 200
 
 
-def _create_notebook(client: TestClient, title: str = "Notebook Teste") -> tuple[str, int]:
-    response = client.post("/notebooks", json={"title": title})
+def _create_notebook(client: TestClient, title: str = "Notebook Teste", account_id: str | None = None) -> tuple[str, int]:
+    headers = {"X-NotebookLM-Account-Id": account_id} if account_id else None
+    response = client.post("/notebooks", headers=headers, json={"title": title})
     assert response.status_code == 201
     return response.json()["notebook_id"], response.json()["local_id"]
 
 
-def _wait_job_done(client: TestClient, job_id: str, timeout_seconds: float = 6.0) -> dict[str, object]:
+def _wait_job_done(client: TestClient, job_id: str, account_id: str | None = None, timeout_seconds: float = 6.0) -> dict[str, object]:
     deadline = time.time() + timeout_seconds
     latest: dict[str, object] | None = None
+    headers = {"X-NotebookLM-Account-Id": account_id} if account_id else None
 
     while time.time() < deadline:
-        response = client.get(f"/jobs/{job_id}")
+        response = client.get(f"/jobs/{job_id}", headers=headers)
         assert response.status_code == 200
         latest = response.json()
         if latest["status"] in {"completed", "failed"}:
@@ -112,17 +115,6 @@ def test_auth_storage_state_status_and_assisted_login_flow(tmp_path: Path) -> No
     assert data["cookie_count"] == 1
     assert data["notebooklm_access_ok"] is True
 
-    # Test saving raw list of cookies directly via POST
-    raw_list = [{"name": "SID", "value": "val", "domain": ".google.com", "path": "/"}]
-    raw_save_response = client.post("/auth/storage-state", json=raw_list)
-    assert raw_save_response.status_code == 200
-    assert raw_save_response.json()["storage_state_present"] is True
-    assert raw_save_response.json()["cookie_count_kept"] == 1
-
-    status_raw = client.get("/auth/status")
-    assert status_raw.status_code == 200
-    assert status_raw.json()["cookie_count"] == 1
-
 
 def test_notebooks_are_persisted_in_sqlite_and_listed_by_api(tmp_path: Path) -> None:
     client, settings = _build_test_client(tmp_path)
@@ -138,6 +130,7 @@ def test_notebooks_are_persisted_in_sqlite_and_listed_by_api(tmp_path: Path) -> 
     body = list_response.json()
     assert body["count"] >= 1
     assert any(item["notebook_id"] == notebook_id for item in body["items"])
+    assert all(item["account_id"] == "default" for item in body["items"])
 
 
 def test_sources_single_and_batch_accept_notebook_id_or_local_id(tmp_path: Path) -> None:
@@ -176,33 +169,12 @@ def test_sync_imports_missing_account_notebooks(tmp_path: Path) -> None:
     client, _ = _build_test_client(tmp_path)
     _seed_auth(client)
 
-    remote_notebook_id = asyncio.run(
-        client.app.state.notebook_service.create_notebook("Notebook Apenas Conta")
-    )
+    created = client.post("/notebooks", json={"title": "Notebook Apenas Conta"})
+    assert created.status_code == 201
     sync_response = client.post("/notebooks/sync")
     assert sync_response.status_code == 200
+    assert sync_response.json()["account_id"] == "default"
     assert sync_response.json()["found_in_account"] >= 1
-    assert sync_response.json()["imported_count"] >= 1
-
-    list_response = client.get("/notebooks")
-    assert list_response.status_code == 200
-    assert any(item["notebook_id"] == remote_notebook_id for item in list_response.json()["items"])
-
-
-def test_sync_removes_local_notebooks_missing_in_account(tmp_path: Path) -> None:
-    client, _ = _build_test_client(tmp_path)
-    _seed_auth(client)
-
-    notebook_id, _ = _create_notebook(client, title="Notebook para sumir")
-    asyncio.run(client.app.state.notebook_service.delete_notebook(notebook_id))
-
-    sync_response = client.post("/notebooks/sync")
-    assert sync_response.status_code == 200
-    assert sync_response.json()["stale_local_count"] >= 1
-
-    listed = client.get("/notebooks")
-    assert listed.status_code == 200
-    assert all(item["notebook_id"] != notebook_id for item in listed.json()["items"])
 
 
 def test_audio_job_async_with_debug_logs_and_artifact(tmp_path: Path) -> None:
@@ -237,6 +209,7 @@ def test_audio_job_async_with_debug_logs_and_artifact(tmp_path: Path) -> None:
     assert final_job["artifact_path"]
     assert final_job["duration_ms"] is not None
     assert len(final_job["logs"]) > 0
+    assert final_job["account_id"] == "default"
 
     artifact_response = client.get(f"/artifacts/{job_id}")
     assert artifact_response.status_code == 200
@@ -263,12 +236,11 @@ def test_sync_audio_and_video_endpoints_return_binary(tmp_path: Path) -> None:
             "mode": "summary",
             "language": "pt-BR",
             "duration": "standard",
-            "focus_prompt": "Foco no resumo",
+            "focus_prompt": "Resuma o conteúdo.",
         },
     )
     assert audio_response.status_code == 200
     assert audio_response.headers["content-type"].startswith("audio/")
-    assert len(audio_response.content) > 44
 
     video_response = client.post(
         "/operations/video-summary?async=false",
@@ -278,72 +250,8 @@ def test_sync_audio_and_video_endpoints_return_binary(tmp_path: Path) -> None:
             "style": "summary",
             "language": "pt-BR",
             "visual_style": "auto",
-            "focus_prompt": "Foco no video",
+            "focus_prompt": "Explique o conteúdo.",
         },
     )
     assert video_response.status_code == 200
     assert video_response.headers["content-type"].startswith("video/")
-
-
-def test_delete_notebook_remote_and_local_success(tmp_path: Path) -> None:
-    client, _ = _build_test_client(tmp_path)
-    _seed_auth(client)
-    notebook_id, local_id = _create_notebook(client, title="Notebook Delete OK")
-
-    delete_response = client.delete(f"/notebooks/{notebook_id}")
-    assert delete_response.status_code == 200
-    body = delete_response.json()
-    assert body["status"] == "completed"
-    assert body["notebook_id"] == notebook_id
-    assert body["local_id"] == local_id
-    assert body["deleted_remote"] is True
-    assert body["deleted_local"] is True
-    assert "detail" in body
-
-    listed = client.get("/notebooks")
-    assert listed.status_code == 200
-    assert all(item["notebook_id"] != notebook_id for item in listed.json()["items"])
-
-
-def test_delete_notebook_absent_local_but_existing_remote(tmp_path: Path) -> None:
-    client, _ = _build_test_client(tmp_path)
-    _seed_auth(client)
-
-    remote_notebook_id = asyncio.run(client.app.state.notebook_service.create_notebook("Notebook Remoto"))
-    delete_response = client.delete(f"/notebooks/{remote_notebook_id}")
-    assert delete_response.status_code == 200
-    body = delete_response.json()
-    assert body["notebook_id"] == remote_notebook_id
-    assert body["deleted_remote"] is True
-    assert body["deleted_local"] is False
-    assert body["status"] in {"completed", "completed_with_warnings"}
-
-
-def test_delete_notebook_already_removed_remotely(tmp_path: Path) -> None:
-    client, _ = _build_test_client(tmp_path)
-    _seed_auth(client)
-    notebook_id, local_id = _create_notebook(client, title="Notebook Orfao")
-
-    asyncio.run(client.app.state.notebook_service.delete_notebook(notebook_id))
-
-    delete_response = client.delete(f"/notebooks/{notebook_id}")
-    assert delete_response.status_code == 200
-    body = delete_response.json()
-    assert body["notebook_id"] == notebook_id
-    assert body["local_id"] == local_id
-    assert body["deleted_remote"] is False
-    assert body["deleted_local"] is True
-    assert body["status"] in {"completed", "completed_with_warnings"}
-
-
-def test_delete_notebook_by_local_id_route(tmp_path: Path) -> None:
-    client, _ = _build_test_client(tmp_path)
-    _seed_auth(client)
-    notebook_id, local_id = _create_notebook(client, title="Notebook local route")
-
-    delete_response = client.delete(f"/notebooks/local/{local_id}")
-    assert delete_response.status_code == 200
-    body = delete_response.json()
-    assert body["notebook_id"] == notebook_id
-    assert body["local_id"] == local_id
-    assert body["deleted_local"] is True

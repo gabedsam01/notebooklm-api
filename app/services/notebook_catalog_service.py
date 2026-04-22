@@ -22,14 +22,20 @@ class NotebookResolveResult:
 
 
 class NotebookCatalogService:
-    def __init__(self, repository: NotebookRepository, notebook_service: NotebookLMService) -> None:
+    def __init__(self, repository: NotebookRepository, notebook_service: NotebookLMService, account_id: str) -> None:
         self._repository = repository
         self._notebook_service = notebook_service
+        self._account_id = account_id
+
+    @property
+    def account_id(self) -> str:
+        return self._account_id
 
     async def create_and_persist(self, title: str) -> NotebookResponse:
         notebook_id = await self._notebook_service.create_notebook(title)
         remote = await self._notebook_service.get_notebook(notebook_id)
         record = self._repository.upsert_notebook(
+            account_id=self._account_id,
             notebook_id=notebook_id,
             title=str((remote or {}).get("title", title)),
             source_count=int((remote or {}).get("source_count", 0)),
@@ -42,11 +48,12 @@ class NotebookCatalogService:
     async def refresh_and_get(self, notebook_id: str) -> NotebookResponse | None:
         remote = await self._notebook_service.get_notebook(notebook_id)
         if remote is None:
-            local = self._repository.get_by_notebook_id(notebook_id)
+            local = self._repository.get_by_notebook_id(self._account_id, notebook_id)
             return NotebookResponse(**local.model_dump()) if local else None
 
-        existing = self._repository.get_by_notebook_id(notebook_id)
+        existing = self._repository.get_by_notebook_id(self._account_id, notebook_id)
         record = self._repository.upsert_notebook(
+            account_id=self._account_id,
             notebook_id=notebook_id,
             title=str(remote.get("title", "Notebook")),
             source_count=int(remote.get("source_count", 0)),
@@ -57,11 +64,11 @@ class NotebookCatalogService:
         return NotebookResponse(**record.model_dump())
 
     def list_persisted(self) -> list[PersistedNotebook]:
-        return self._repository.list_all()
+        return self._repository.list_all(self._account_id)
 
     async def sync_from_account(self) -> NotebookSyncResponse:
         account_items = await self._notebook_service.list_notebooks()
-        local_items = self._repository.list_all()
+        local_items = self._repository.list_all(self._account_id)
         local_map = {item.notebook_id: item for item in local_items}
 
         imported_count = 0
@@ -73,6 +80,7 @@ class NotebookCatalogService:
             source_count = int(item.get("source_count") or 0)
             existing = local_map.get(notebook_id)
             self._repository.upsert_notebook(
+                account_id=self._account_id,
                 notebook_id=notebook_id,
                 title=title,
                 source_count=source_count,
@@ -91,11 +99,12 @@ class NotebookCatalogService:
         stale_local_items = [item for item in local_items if item.notebook_id not in account_ids]
         stale_local_count = 0
         for item in stale_local_items:
-            deleted, _ = self._repository.delete_by_notebook_id(item.notebook_id)
+            deleted, _ = self._repository.delete_by_notebook_id(item.notebook_id, self._account_id)
             if deleted:
                 stale_local_count += 1
 
         return NotebookSyncResponse(
+            account_id=self._account_id,
             found_in_account=len(account_ids),
             imported_count=imported_count,
             stale_local_count=stale_local_count,
@@ -107,7 +116,7 @@ class NotebookCatalogService:
 
     def resolve_notebook_id(self, notebook_id: str | None, local_id: int | None) -> NotebookResolveResult:
         if notebook_id:
-            local = self._repository.get_by_notebook_id(notebook_id)
+            local = self._repository.get_by_notebook_id(self._account_id, notebook_id)
             return NotebookResolveResult(
                 notebook_id=notebook_id,
                 local_id=(local.local_id if local else None),
@@ -116,13 +125,13 @@ class NotebookCatalogService:
         if local_id is None:
             raise ValueError("Informe notebook_id ou local_id")
 
-        local = self._repository.get_by_local_id(local_id)
+        local = self._repository.get_by_local_id(self._account_id, local_id)
         if local is None:
             raise ValueError("local_id nao encontrado")
         return NotebookResolveResult(notebook_id=local.notebook_id, local_id=local.local_id)
 
     def increment_artifact_count(self, notebook_id: str) -> None:
-        self._repository.increment_artifact_count(notebook_id)
+        self._repository.increment_artifact_count(self._account_id, notebook_id)
 
     async def delete_notebook(
         self,
@@ -136,13 +145,13 @@ class NotebookCatalogService:
         resolved_notebook_id: str | None = notebook_id
 
         if local_id is not None:
-            local_record = self._repository.get_by_local_id(local_id)
+            local_record = self._repository.get_by_local_id(self._account_id, local_id)
             if local_record is not None:
                 resolved_notebook_id = local_record.notebook_id
 
         if resolved_notebook_id:
             if local_record is None:
-                local_record = self._repository.get_by_notebook_id(resolved_notebook_id)
+                local_record = self._repository.get_by_notebook_id(self._account_id, resolved_notebook_id)
         elif local_record is not None:
             resolved_notebook_id = local_record.notebook_id
 
@@ -151,6 +160,7 @@ class NotebookCatalogService:
                 status="failed",
                 notebook_id="",
                 local_id=local_id,
+                account_id=self._account_id,
                 deleted_remote=False,
                 deleted_local=False,
                 detail="Nao foi possivel resolver notebook_id a partir de local_id.",
@@ -177,11 +187,11 @@ class NotebookCatalogService:
             detail_parts.append(f"Falha ao remover remoto: {exc.__class__.__name__}")
 
         if local_record is not None:
-            deleted_local, _ = self._repository.delete_by_notebook_id(local_record.notebook_id)
+            deleted_local, _ = self._repository.delete_by_notebook_id(local_record.notebook_id, self._account_id)
             if deleted_local:
                 detail_parts.append("Registro local removido")
         elif local_id is not None:
-            deleted_local, _ = self._repository.delete_by_local_id(local_id)
+            deleted_local, _ = self._repository.delete_by_local_id(local_id, self._account_id)
             if deleted_local:
                 detail_parts.append("Registro local removido")
         else:
@@ -197,6 +207,7 @@ class NotebookCatalogService:
             status=status_label,
             notebook_id=resolved_notebook_id,
             local_id=(local_record.local_id if local_record else local_id),
+            account_id=self._account_id,
             deleted_remote=deleted_remote,
             deleted_local=deleted_local,
             detail="; ".join(detail_parts) if detail_parts else "Operacao concluida.",

@@ -3,7 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 
-from app.api.deps import get_job_service
+from app.api.deps import get_current_account, get_job_service
+from app.models.account import AccountResponse
 from app.models.jobs import JobStatus
 from app.services.job_service import JobService
 
@@ -13,9 +14,10 @@ router = APIRouter(prefix="/artifacts", tags=["artifacts"])
 @router.get("/{job_id}")
 async def download_artifact(
     job_id: str,
+    account: AccountResponse = Depends(get_current_account),
     job_service: JobService = Depends(get_job_service),
 ) -> FileResponse:
-    job = job_service.get_job(job_id)
+    job = job_service.get_job_for_account(job_id, account.id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job nao encontrado")
 

@@ -16,6 +16,9 @@ class JobRepository(Protocol):
     def list(self, job_id: str | None = None, name: str | None = None) -> list[JobRecord]:
         ...
 
+    def get_for_account(self, job_id: str, account_id: str) -> JobRecord | None:
+        ...
+
 
 class LocalJsonJobRepository:
     def __init__(self, jobs_dir: Path) -> None:
@@ -35,6 +38,12 @@ class LocalJsonJobRepository:
         if not file_path.exists():
             return None
         return JobRecord.model_validate_json(file_path.read_text(encoding="utf-8"))
+
+    def get_for_account(self, job_id: str, account_id: str) -> JobRecord | None:
+        job = self.get(job_id)
+        if job is None or job.account_id != account_id:
+            return None
+        return job
 
     def list(self, job_id: str | None = None, name: str | None = None) -> list[JobRecord]:
         if job_id:

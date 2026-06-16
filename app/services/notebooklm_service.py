@@ -175,6 +175,10 @@ class MockNotebookLMService:
         return destination_path
 
 
+#: Verificacoes consecutivas "not_found" antes de tratar o artefato como removido/terminal.
+NOT_FOUND_MAX = 5
+
+
 class NotebookLMPyService:
     """Defensive adapter for notebooklm-py (unofficial API)."""
 
@@ -280,6 +284,7 @@ class NotebookLMPyService:
             start_time = time.monotonic()
             last_status = None
             consecutive_errors = 0
+            consecutive_not_found = 0
             while time.monotonic() - start_time < timeout_seconds:
                 try:
                     status_obj = await client.artifacts.poll_status(notebook_id=notebook_id, task_id=artifact_reference)
@@ -294,9 +299,25 @@ class NotebookLMPyService:
                         last_status = current_status
                     if current_status == 'completed':
                         return getattr(status_obj, 'task_id', artifact_reference) or artifact_reference
-                    if current_status == 'failed':
-                        error_msg = getattr(status_obj, 'error', 'Erro desconhecido')
-                        raise NotebookLMOperationError(f'Geracao de artefato falhou remotamente: {error_msg}')
+                    # Terminais de falha: 'failed' (servidor marcou FAILED) e 'removed'
+                    # (artefato sumiu da listagem, ex.: quota). Ambos encerram ja, sem
+                    # esperar o timeout.
+                    if current_status in ('failed', 'removed'):
+                        error_msg = getattr(status_obj, 'error', None) or 'Erro desconhecido'
+                        raise NotebookLMOperationError(
+                            f'Geracao de artefato terminou como "{current_status}" remotamente: {error_msg}'
+                        )
+                    # 'not_found' breve e tolerado (lag pos-criacao); persistente
+                    # (>= NOT_FOUND_MAX consecutivos) e tratado como removido/terminal.
+                    if current_status == 'not_found':
+                        consecutive_not_found += 1
+                        if consecutive_not_found >= NOT_FOUND_MAX:
+                            raise NotebookLMOperationError(
+                                f'Artefato ausente da listagem em {consecutive_not_found} '
+                                'verificacoes consecutivas (tratado como removido).'
+                            )
+                    else:
+                        consecutive_not_found = 0
                 except NotebookLMOperationError:
                     raise
                 except Exception as exc:

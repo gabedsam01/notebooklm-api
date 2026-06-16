@@ -96,6 +96,9 @@ class JobService:
     def get_job(self, job_id: str) -> JobRecord | None:
         return self._repository.get(job_id)
 
+    def get_job_for_account(self, job_id: str, account_id: str) -> JobRecord | None:
+        return self._repository.get_for_account(job_id, account_id)
+
     def list_jobs(self, job_id: str | None = None, name: str | None = None, account_id: str | None = None) -> list[JobRecord]:
         jobs = self._repository.list(job_id=job_id, name=name)
         if account_id is not None:
@@ -103,7 +106,15 @@ class JobService:
         return jobs
 
     def resolve_artifact_path(self, job: JobRecord) -> Path | None:
-        return self._artifact_service.resolve_job_artifact_path(job)
+        path = self._artifact_service.resolve_job_artifact_path(job)
+        if path is None:
+            return None
+        # Defesa contra path traversal: o artefato precisa ficar dentro de artifacts_dir.
+        artifacts_dir = self._settings.artifacts_dir.resolve()
+        resolved = path.resolve()
+        if not resolved.is_relative_to(artifacts_dir):
+            return None
+        return resolved
 
     async def shutdown(self) -> None:
         with self._threads_lock:

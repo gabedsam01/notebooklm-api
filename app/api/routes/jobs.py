@@ -22,8 +22,12 @@ async def create_job(
 
 
 @router.get("/{job_id}", response_model=JobRecord)
-async def get_job(job_id: str, job_service: JobService = Depends(get_job_service)) -> JobRecord:
-    job = job_service.get_job(job_id)
+async def get_job(
+    job_id: str,
+    account: AccountResponse = Depends(get_current_account),
+    job_service: JobService = Depends(get_job_service),
+) -> JobRecord:
+    job = job_service.get_job_for_account(job_id, account.id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job nao encontrado")
     return job

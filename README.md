@@ -1,5 +1,9 @@
 # NotebookLM API
 
+![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
+![Python](https://img.shields.io/badge/python-%3E%3D3.11-blue.svg)
+![Version](https://img.shields.io/badge/version-0.2.0-informational.svg)
+
 API própria **HTTP-first** para operar fluxos do [NotebookLM do Google](https://notebooklm.google.com/) de forma programática — com **API REST (FastAPI)**, **CLI (`notebooklmapi`)** e uma **Web UI** server-rendered.
 
 Internamente usa a biblioteca **[`notebooklm-py`](https://github.com/teng-lin/notebooklm-py)** como motor (`>=0.7.1,<0.8`), isolada atrás de um adapter próprio (`NotebookLMPyService`).
@@ -119,3 +123,8 @@ Mapeamento (resumo): `NOT_FOUND` (404), `AUTH_REQUIRED` (401), `RATE_LIMITED` (4
 Guia completo: **[docs/upgrade-0.2.md](docs/upgrade-0.2.md)** · histórico: **[CHANGELOG.md](CHANGELOG.md)** · smoke manual: **[docs/smoke-test.md](docs/smoke-test.md)**.
 
 > Os arquivos em `docs/` (api/auth/cli/…) são anteriores à 0.2.0 e estão em revisão; em caso de divergência, prevalecem este README, o CHANGELOG e o guia de upgrade.
+
+## License
+
+MIT License. See [LICENSE](LICENSE).
+

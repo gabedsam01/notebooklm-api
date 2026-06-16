@@ -1,0 +1,16 @@
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
+    ignore:
+      # notebooklm-py 0.8 muda o "error contract" da lib; o upgrade exige
+      # migracao manual do adapter. NAO atualizar automaticamente para >=0.8.
+      - dependency-name: "notebooklm-py"
+        versions: [">=0.8.0"]
+  # Sem ecosystem "github-actions": o projeto ainda nao tem workflows de CI.

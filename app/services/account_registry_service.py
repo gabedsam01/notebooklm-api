@@ -56,12 +56,17 @@ class AccountRegistryService:
         if meta is None:
             return None
         storage_path = self.get_storage_state_path(account_id)
+        chrome_path = self.get_chrome_profile_path(account_id)
         return AccountResponse(
-            **meta.model_dump(),
-            has_storage_state=storage_path.exists() and storage_path.stat().st_size > 0,
-            storage_state_path=str(storage_path),
-            chrome_profile_path=str(self.get_chrome_profile_path(account_id)),
+            id=meta.id,
+            alias=meta.alias,
+            status=meta.status,
+            created_at=meta.created_at,
+            last_verified_at=meta.last_verified_at,
             is_default=(account_id == self.default_account_id),
+            enabled=(meta.status != 'disabled'),
+            has_storage_state=storage_path.exists() and storage_path.stat().st_size > 0,
+            has_chrome_profile=chrome_path.exists() and chrome_path.is_dir(),
         )
 
     def get_meta(self, account_id: str) -> AccountMeta | None:

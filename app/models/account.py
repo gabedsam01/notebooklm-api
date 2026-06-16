@@ -34,8 +34,19 @@ class AccountUpdateStatusRequest(BaseModel):
     detail: str | None = Field(default=None, max_length=1_000)
 
 
-class AccountResponse(AccountMeta):
-    has_storage_state: bool
-    storage_state_path: str
-    chrome_profile_path: str
+class AccountResponse(BaseModel):
+    """DTO publico seguro de conta (Onda 6).
+
+    NUNCA expoe storage_state_path/chrome_profile_path nem last_error textual;
+    os paths permanecem internos no AccountRegistry/servicos.
+    """
+
+    id: str
+    alias: str | None = None
+    status: AccountStatus
     is_default: bool = False
+    enabled: bool
+    has_storage_state: bool
+    has_chrome_profile: bool
+    created_at: datetime
+    last_verified_at: datetime | None = None

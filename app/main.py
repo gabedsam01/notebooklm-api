@@ -22,6 +22,7 @@ from app.services.notebooklm_factory import NotebookLMServiceFactory
 from app.services.source_builder_service import SourceBuilderService
 from app.services.storage_state_service import StorageStateService
 from app.web import routes as web_routes
+from app.api.error_handlers import register_exception_handlers
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(operations.router)
     app.include_router(artifacts.router)
     app.include_router(web_routes.router)
+
+    register_exception_handlers(app)
 
     return app
 

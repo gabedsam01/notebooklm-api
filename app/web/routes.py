@@ -16,6 +16,7 @@ from app.models.jobs import (
     VideoSummaryStyle,
 )
 from app.models.sources import TextSourceInput
+from app.utils.error_sanitizer import sanitize_exception
 
 router = APIRouter(include_in_schema=False)
 
@@ -68,7 +69,7 @@ async def web_save_storage_state(
             request,
             variant="error",
             title="Falha ao salvar storage state",
-            message=f"{exc.__class__.__name__}: {exc}",
+            message=sanitize_exception(exc),
             elapsed_ms=_elapsed_ms(started),
         )
 
@@ -98,7 +99,7 @@ async def web_create_notebook(
             request,
             variant="error",
             title="Falha ao criar notebook",
-            message=f"{exc.__class__.__name__}: {exc}",
+            message=sanitize_exception(exc),
             elapsed_ms=_elapsed_ms(started),
         )
 
@@ -131,7 +132,7 @@ async def web_sync_notebooks(request: Request) -> HTMLResponse:
             request,
             variant="error",
             title="Falha na sincronizacao",
-            message=f"{exc.__class__.__name__}: {exc}",
+            message=sanitize_exception(exc),
             elapsed_ms=_elapsed_ms(started),
         )
 
@@ -156,7 +157,7 @@ async def web_delete_notebook(request: Request, notebook_id: str) -> HTMLRespons
             request,
             variant="error",
             title="Falha ao remover notebook",
-            message=f"{exc.__class__.__name__}: {exc}",
+            message=sanitize_exception(exc),
             elapsed_ms=_elapsed_ms(started),
         )
 
@@ -213,7 +214,7 @@ async def web_add_source_text(
             request,
             variant="error",
             title="Falha ao adicionar fonte",
-            message=f"{exc.__class__.__name__}: {exc}",
+            message=sanitize_exception(exc),
             elapsed_ms=_elapsed_ms(started),
         )
 
@@ -257,7 +258,7 @@ async def web_add_source_batch(
             request,
             variant="error",
             title="Falha no lote de fontes",
-            message=f"{exc.__class__.__name__}: {exc}",
+            message=sanitize_exception(exc),
             elapsed_ms=_elapsed_ms(started),
         )
 
@@ -321,7 +322,7 @@ async def web_create_audio_job(
             request,
             variant="error",
             title="Falha ao criar job de audio",
-            message=f"{exc.__class__.__name__}: {exc}",
+            message=sanitize_exception(exc),
             elapsed_ms=_elapsed_ms(started),
         )
 
@@ -366,7 +367,7 @@ async def web_create_video_job(
             request,
             variant="error",
             title="Falha ao criar job de video",
-            message=f"{exc.__class__.__name__}: {exc}",
+            message=sanitize_exception(exc),
             elapsed_ms=_elapsed_ms(started),
         )
 

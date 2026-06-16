@@ -256,8 +256,9 @@ class JobService:
             self._update_job(job, status=JobStatus.completed, artifact_path=str(destination), artifact_metadata=metadata)
             self._append_log(job, stage='download', message='Download concluido com sucesso.')
         except Exception as exc:
-            self._update_job(job, status=JobStatus.failed, error=str(exc))
-            self._append_log(job, stage='error', message=f'Falha no download: {exc}')
+            safe_error = sanitize_exception(exc)
+            self._update_job(job, status=JobStatus.failed, error=safe_error)
+            self._append_log(job, stage='error', message=f'Falha no download: {safe_error}')
 
     def _prepare_payload(self, payload: JobRequest) -> JobRequest:
         account_id = getattr(payload, 'account_id', None) or self._settings.default_account_id
@@ -354,11 +355,11 @@ class JobService:
         try:
             final_reference = await service.wait_for_artifact(notebook_id=notebook_id, artifact_reference=artifact_reference, timeout_seconds=timeout_seconds, poll_interval_seconds=poll_interval, status_callback=status_updater)
         except TimeoutError as exc:
-            self._append_log(job, stage='timed_out', message=str(exc))
+            self._append_log(job, stage='timed_out', message=sanitize_exception(exc))
             self._append_log(job, stage='fallback', message='tentando fallback por descoberta de artefato...')
             final_reference = await self._find_ready_artifact_fallback(service, notebook_id, 'audio')
             if not final_reference:
-                self._update_job(job, status=JobStatus.timed_out, error=str(exc))
+                self._update_job(job, status=JobStatus.timed_out, error=sanitize_exception(exc))
                 raise
             self._append_log(job, stage='fallback', message=f'fallback funcionou: artefato {final_reference} encontrado')
         self._append_log(job, stage='download_audio', message='baixando artefato de audio...')
@@ -391,11 +392,11 @@ class JobService:
         try:
             final_reference = await service.wait_for_artifact(notebook_id=notebook_id, artifact_reference=artifact_reference, timeout_seconds=timeout_seconds, poll_interval_seconds=poll_interval, status_callback=status_updater)
         except TimeoutError as exc:
-            self._append_log(job, stage='timed_out', message=str(exc))
+            self._append_log(job, stage='timed_out', message=sanitize_exception(exc))
             self._append_log(job, stage='fallback', message='tentando fallback por descoberta de artefato...')
             final_reference = await self._find_ready_artifact_fallback(service, notebook_id, 'video')
             if not final_reference:
-                self._update_job(job, status=JobStatus.timed_out, error=str(exc))
+                self._update_job(job, status=JobStatus.timed_out, error=sanitize_exception(exc))
                 raise
             self._append_log(job, stage='fallback', message=f'fallback funcionou: artefato {final_reference} encontrado')
         self._append_log(job, stage='download_video', message='baixando artefato de video...')

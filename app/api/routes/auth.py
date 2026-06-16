@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import get_auth_service, get_current_account, get_notebook_service
 from app.models.account import AccountResponse
+from app.utils.error_sanitizer import sanitize_exception
 from app.models.auth import (
     AuthStatusResponse,
     LoginCompleteRequest,
@@ -36,7 +37,7 @@ async def save_storage_state(
     try:
         return auth_service.save_storage_state(account.id, payload)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=sanitize_exception(exc)) from exc
 
 
 @router.post("/login/start", response_model=LoginStartResponse)

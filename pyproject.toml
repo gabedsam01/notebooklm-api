@@ -33,3 +33,9 @@ include = ["app*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+  "unit: teste unitario isolado",
+  "integration: sobe a app via TestClient",
+  "e2e: exige sessao real do Google (NAO roda por padrao)",
+  "manual: verificacao manual / script",
+]

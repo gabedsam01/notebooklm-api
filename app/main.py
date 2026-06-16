@@ -3,7 +3,8 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -23,6 +24,7 @@ from app.services.source_builder_service import SourceBuilderService
 from app.services.storage_state_service import StorageStateService
 from app.web import routes as web_routes
 from app.api.error_handlers import register_exception_handlers
+from app.core.security import require_auth
 
 logger = logging.getLogger(__name__)
 
@@ -88,17 +90,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.keepalive_service = keepalive_service
     app.state.templates = Jinja2Templates(directory=str(resolved_settings.templates_dir))
 
+    _configure_cors(app, resolved_settings)
+
     app.mount("/static", StaticFiles(directory=str(resolved_settings.static_dir)), name="static")
 
+    # /health publico; demais routers (incluindo a Web UI) atras do Bearer.
     app.include_router(health.router)
-    app.include_router(accounts.router)
-    app.include_router(auth.router)
-    app.include_router(jobs.router)
-    app.include_router(notebooks.router)
-    app.include_router(sources.router)
-    app.include_router(operations.router)
-    app.include_router(artifacts.router)
-    app.include_router(web_routes.router)
+
+    protected = [Depends(require_auth)]
+    app.include_router(accounts.router, dependencies=protected)
+    app.include_router(auth.router, dependencies=protected)
+    app.include_router(jobs.router, dependencies=protected)
+    app.include_router(notebooks.router, dependencies=protected)
+    app.include_router(sources.router, dependencies=protected)
+    app.include_router(operations.router, dependencies=protected)
+    app.include_router(artifacts.router, dependencies=protected)
+    app.include_router(web_routes.router, dependencies=protected)
 
     register_exception_handlers(app)
 
@@ -115,6 +122,20 @@ def _prepare_directories(settings: Settings) -> None:
     settings.sqlite_db_path.parent.mkdir(parents=True, exist_ok=True)
     settings.templates_dir.mkdir(parents=True, exist_ok=True)
     settings.static_dir.mkdir(parents=True, exist_ok=True)
+
+
+def _configure_cors(app: FastAPI, settings: Settings) -> None:
+    origins = settings.cors_origin_list()
+    if not origins:
+        return  # CORS fechado por padrao (sem origens configuradas)
+    allow_credentials = settings.cors_allow_credentials and '*' not in origins
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_methods=settings.cors_method_list(),
+        allow_headers=settings.cors_header_list(),
+        allow_credentials=allow_credentials,
+    )
 
 
 app = create_app()

@@ -52,6 +52,27 @@ class Settings(BaseSettings):
     worker_poll_interval_seconds: float = Field(default=0.2, ge=0.01)
     sqlite_db_path: Path | None = None
 
+    # --- Seguranca da API (Onda 5) ---
+    api_auth_token: str | None = None
+    allow_insecure_no_auth: bool = False
+    cors_allow_origins: str = ''
+    cors_allow_methods: str = 'GET,POST,PUT,DELETE,OPTIONS'
+    cors_allow_headers: str = 'Authorization,Content-Type,X-NotebookLM-Account-Id'
+    cors_allow_credentials: bool = False
+
+    @staticmethod
+    def _split_csv(value: str) -> list[str]:
+        return [item.strip() for item in value.split(',') if item.strip()]
+
+    def cors_origin_list(self) -> list[str]:
+        return self._split_csv(self.cors_allow_origins)
+
+    def cors_method_list(self) -> list[str]:
+        return self._split_csv(self.cors_allow_methods)
+
+    def cors_header_list(self) -> list[str]:
+        return self._split_csv(self.cors_allow_headers)
+
     @field_validator(
         'data_dir',
         'jobs_dir',

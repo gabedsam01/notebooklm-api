@@ -1,5 +1,12 @@
 # Segurança
 
+## Versões suportadas
+
+| Versão | Suporte |
+|---|---|
+| 0.2.x | ✅ correções de segurança |
+| 0.1.x | ❌ não suportada (anterior à migração 0.2.0) |
+
 ## 1. Aviso (API não oficial)
 
 - Este projeto usa a biblioteca **`notebooklm-py`**, que é **não oficial**.
@@ -28,6 +35,8 @@ O `storage_state` contém **cookies de sessão do Google** (ex.: nomes como `SID
 - Considere **rate limit no proxy** (não há rate limit embutido).
 - `/health` é público; `/docs`/`/openapi.json` são públicos por decisão atual (expõem só o schema). Proteja-os no proxy se desejar.
 
+**Checklist de deploy:** HTTPS no proxy · `API_AUTH_TOKEN` forte e secreto · `CORS_ALLOW_ORIGINS` restrito · `ALLOW_INSECURE_NO_AUTH=false` · **backup seguro de `data/`** antes de upgrades.
+
 ## 4. Logs e erros
 
 - Há um **sanitizer best-effort** que remove cookies, `Authorization`/`Bearer`, `storage_state`, `chrome-profile`, paths internos e tracebacks das mensagens de erro internas/logs.
@@ -42,4 +51,6 @@ O `storage_state` contém **cookies de sessão do Google** (ex.: nomes como `SID
 
 ## 6. Relato de vulnerabilidade
 
-Encontrou um problema de segurança? **Não publique segredos.** Abra um aviso/issue **privado** (GitHub Security Advisory, se disponível) ou uma issue **sem** cookies, tokens ou `storage_state`, descrevendo o impacto e os passos. Aguarde resposta antes de divulgação pública.
+Encontrou um problema de segurança? **Não publique segredos.** Abra um aviso **privado** (GitHub Security Advisory, se disponível); se não houver, uma issue **sem** dados sensíveis, descrevendo o impacto e os passos. Aguarde resposta antes da divulgação pública.
+
+**Nunca cole** (em issues, PRs, logs ou prints): `storage_state.json`, cookies (`SID`, `__Secure-1PSID`, `__Secure-1PSIDTS`), `API_AUTH_TOKEN`, o header `Authorization` / `Bearer ...` ou caminhos internos.

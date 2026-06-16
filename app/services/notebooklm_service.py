@@ -187,11 +187,15 @@ class NotebookLMPyService:
         self._auth_dir = str(storage_state_service.storage_state_path.parent)
 
     async def _get_client(self) -> 'NotebookLMClient':
+        # Retorna o async context manager canonico de from_storage (sem `await`
+        # direto, que e deprecado desde notebooklm-py 0.5). Os call-sites usam
+        # `async with await self._get_client()`; o `await` ali apenas resolve
+        # esta corrotina e nao a chamada de from_storage.
         from notebooklm import NotebookLMClient
         if not self._storage_state_service.exists():
             raise NotebookLMOperationError('Storage state ausente. Salve cookies em /auth/storage-state.')
         try:
-            return await NotebookLMClient.from_storage(str(self._storage_state_service.storage_state_path))
+            return NotebookLMClient.from_storage(str(self._storage_state_service.storage_state_path))
         except Exception as exc:
             raise NotebookLMOperationError(f'Falha ao inicializar cliente: {sanitize_exception(exc)}') from exc
 
@@ -207,7 +211,23 @@ class NotebookLMPyService:
 
     async def list_notebooks(self) -> list[dict[str, Any]]:
         async with await self._get_client() as client:
-            notebooks = await client.notebooks.list()
+            try:
+                notebooks = await client.notebooks.list()
+            except NotebookLMOperationError:
+                raise
+            except Exception as exc:
+                # Drift de RPC / erro upstream NAO pode ser interpretado como
+                # "lista vazia": converte para erro de dominio para que o sync
+                # aborte ANTES de apagar o catalogo local. (Lib >=0.5 ja levanta
+                # UnknownRPCMethodError em strict-decode; este guard e defesa em
+                # profundidade e mantem a dependencia da lib na fronteira do adapter.)
+                from notebooklm.exceptions import RPCError
+                if isinstance(exc, RPCError):
+                    raise NotebookLMOperationError(
+                        'Falha upstream ao listar notebooks (possivel drift de RPC); '
+                        'catalogo local preservado: ' + sanitize_exception(exc)
+                    ) from exc
+                raise
             return [{'id': nb.id, 'title': nb.title, 'source_count': nb.sources_count} for nb in notebooks]
 
     async def create_notebook(self, title: str) -> str:
@@ -296,7 +316,7 @@ class NotebookLMPyService:
             artifacts = await client.artifacts.list(notebook_id=notebook_id)
             result = []
             for art in artifacts:
-                media_type = getattr(art.artifact_type, 'value', 'unknown')
+                media_type = getattr(getattr(art, 'kind', None), 'value', 'unknown')
                 result.append({'id': getattr(art, 'id', None), 'title': getattr(art, 'title', 'Artifact'), 'media_type': media_type, 'is_completed': getattr(art, 'is_completed', False), 'created_at': getattr(art, 'created_at', '')})
             return result
 

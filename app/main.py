@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -32,7 +31,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     configure_logging(resolved_settings.log_level)
 
     _prepare_directories(resolved_settings)
-    _sync_notebooklm_home(resolved_settings)
 
     storage_state_service = StorageStateService(resolved_settings.storage_state_path)
     account_registry = AccountRegistryService(resolved_settings)
@@ -114,12 +112,6 @@ def _prepare_directories(settings: Settings) -> None:
     settings.sqlite_db_path.parent.mkdir(parents=True, exist_ok=True)
     settings.templates_dir.mkdir(parents=True, exist_ok=True)
     settings.static_dir.mkdir(parents=True, exist_ok=True)
-
-
-def _sync_notebooklm_home(settings: Settings) -> None:
-    auth_dir = str(settings.storage_state_path.parent)
-    os.environ["NOTEBOOKLM_HOME"] = auth_dir
-    logger.info("NOTEBOOKLM_HOME sincronizado: %s", auth_dir)
 
 
 app = create_app()

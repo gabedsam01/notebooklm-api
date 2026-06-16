@@ -65,14 +65,18 @@ def test_download_artifact_calls_download_video_for_video_type(tmp_path: Path) -
     asyncio.run(run())
 
 
-def test_download_artifact_sets_notebooklm_home_per_account(tmp_path: Path) -> None:
+def test_download_artifact_does_not_set_notebooklm_home(tmp_path: Path, monkeypatch) -> None:
+    # Onda 2: o download nao faz mais swap de NOTEBOOKLM_HOME; o isolamento por
+    # conta vem do storage_state do proprio cliente (from_storage), nao do env.
+    monkeypatch.delenv("NOTEBOOKLM_HOME", raising=False)
+
     async def run():
         storage_state_path = tmp_path / "acc" / "storage_state.json"
         storage_state_path.parent.mkdir(parents=True, exist_ok=True)
         storage_state_path.write_text("{}")
         service = NotebookLMPyService(storage_state_service=StorageStateService(storage_state_path=storage_state_path))
 
-        seen = {"home": None}
+        seen = {"home": "sentinel"}
 
         async def fake_audio(**kwargs):
             seen["home"] = os.environ.get("NOTEBOOKLM_HOME")
@@ -88,7 +92,8 @@ def test_download_artifact_sets_notebooklm_home_per_account(tmp_path: Path) -> N
 
         dest = tmp_path / "out.wav"
         await service.download_artifact("nb1", "art1", dest, media_type="audio")
-        assert seen["home"] == str(storage_state_path.parent)
+        assert seen["home"] is None
+        assert dest.exists()
 
     asyncio.run(run())
 

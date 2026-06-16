@@ -5,7 +5,6 @@ import importlib
 import inspect
 import io
 import math
-import os
 import shutil
 import time
 import wave
@@ -176,15 +175,11 @@ class MockNotebookLMService:
         return destination_path
 
 
-global_env_lock = asyncio.Lock()
-
-
 class NotebookLMPyService:
     """Defensive adapter for notebooklm-py (unofficial API)."""
 
     def __init__(self, storage_state_service: StorageStateService) -> None:
         self._storage_state_service = storage_state_service
-        self._auth_dir = str(storage_state_service.storage_state_path.parent)
 
     async def _get_client(self) -> 'NotebookLMClient':
         # Retorna o async context manager canonico de from_storage (sem `await`
@@ -321,30 +316,24 @@ class NotebookLMPyService:
             return result
 
     async def download_artifact(self, notebook_id: str, artifact_reference: str, destination_path: Path, media_type: str = 'audio') -> Path:
-        async with global_env_lock:
-            original_home = os.environ.get('NOTEBOOKLM_HOME')
-            os.environ['NOTEBOOKLM_HOME'] = self._auth_dir
+        # A lib (>=0.5) baixa usando o storage_state do proprio cliente
+        # (from_storage), entao nao ha mais swap global de NOTEBOOKLM_HOME nem
+        # lock de processo: cada conta usa seu cliente isolado por path.
+        async with await self._get_client() as client:
+            destination_path.parent.mkdir(parents=True, exist_ok=True)
             try:
-                async with await self._get_client() as client:
-                    destination_path.parent.mkdir(parents=True, exist_ok=True)
-                    try:
-                        if media_type == 'video':
-                            await client.artifacts.download_video(notebook_id=notebook_id, output_path=str(destination_path), artifact_id=artifact_reference)
-                        else:
-                            await client.artifacts.download_audio(notebook_id=notebook_id, output_path=str(destination_path), artifact_id=artifact_reference)
-                    except Exception as exc:
-                        raise NotebookLMOperationError(f'Falha ao baixar artefato ({media_type}): {sanitize_exception(exc)}') from exc
-                    if not destination_path.exists():
-                        raise NotebookLMOperationError(f'Falha silenciosa: O arquivo do artefato nao foi criado em {destination_path}')
-                    if destination_path.stat().st_size == 0:
-                        destination_path.unlink()
-                        raise NotebookLMOperationError('Falha no download: O arquivo baixado tem tamanho 0 bytes.')
-                    return destination_path
-            finally:
-                if original_home is None:
-                    os.environ.pop('NOTEBOOKLM_HOME', None)
+                if media_type == 'video':
+                    await client.artifacts.download_video(notebook_id=notebook_id, output_path=str(destination_path), artifact_id=artifact_reference)
                 else:
-                    os.environ['NOTEBOOKLM_HOME'] = original_home
+                    await client.artifacts.download_audio(notebook_id=notebook_id, output_path=str(destination_path), artifact_id=artifact_reference)
+            except Exception as exc:
+                raise NotebookLMOperationError(f'Falha ao baixar artefato ({media_type}): {sanitize_exception(exc)}') from exc
+            if not destination_path.exists():
+                raise NotebookLMOperationError(f'Falha silenciosa: O arquivo do artefato nao foi criado em {destination_path}')
+            if destination_path.stat().st_size == 0:
+                destination_path.unlink()
+                raise NotebookLMOperationError('Falha no download: O arquivo baixado tem tamanho 0 bytes.')
+            return destination_path
 
 
 def build_notebook_service(settings: Settings, storage_state_service: StorageStateService) -> NotebookLMService:

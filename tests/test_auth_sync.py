@@ -1,4 +1,4 @@
-"""Tests para sincronização base de NOTEBOOKLM_HOME e multi-account auth paths."""
+"""Tests de isolamento por conta e ausencia de NOTEBOOKLM_HOME global (Onda 2)."""
 from __future__ import annotations
 
 import os
@@ -9,7 +9,8 @@ from app.main import create_app
 from app.services.account_registry_service import AccountRegistryService
 
 
-def test_notebooklm_home_synced_on_app_creation(tmp_path: Path) -> None:
+def test_create_app_does_not_set_notebooklm_home_global(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("NOTEBOOKLM_HOME", raising=False)
     data_dir = tmp_path / "data"
     settings = Settings(
         app_host="0.0.0.0",
@@ -20,8 +21,9 @@ def test_notebooklm_home_synced_on_app_creation(tmp_path: Path) -> None:
 
     _ = create_app(settings)
 
-    expected_auth_dir = str(settings.storage_state_path.parent)
-    assert os.environ.get("NOTEBOOKLM_HOME") == expected_auth_dir
+    # Onda 2: o app nao depende mais de NOTEBOOKLM_HOME global; cada conta usa
+    # seu storage_state explicito via from_storage(storage_path).
+    assert "NOTEBOOKLM_HOME" not in os.environ
 
 
 def test_account_registry_uses_per_account_storage_paths(tmp_path: Path) -> None:
